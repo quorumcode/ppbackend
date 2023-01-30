@@ -1,0 +1,4383 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-description-structure.html
+# The value for the description declaration must be a literal string that is between 0 and 1024 bytes in length. You cannot use a parameter or function to specify the description
+# THIS FIELD IS OPTIONAL, so maybe just omit it (as long as it can't be parametric) or exclude variable part?
+# Description: Fn::FindInMap [InstanceMode2Title, "Description", !Ref InstanceMode]
+Description: "PollenPay BNPL v2x"
+
+Parameters:
+  InstanceMode:
+    Description: The instance mode
+    Type: String
+    AllowedValues:
+      - prod
+      - test
+      - mock
+    Default: test
+
+Mappings:
+  InstanceMode2Title:
+    # Description:
+    #   prod: "PollenPay BNPL v2 production"
+    #   test: "PollenPay BNPL v2.0.1 debug-test"
+    #   mock: "PollenPay BNPL v2.0.1 debug-mock"
+    StackName:
+      prod: "v2-production"
+      test: "v201-debug-test"
+      mock: "v201-debug-mock"
+    PPMailAPIName:
+      prod: "PollenPay v2 Email Verification API (Production)"
+      test: "PollenPay v2.0.1 Email Verification API (Debug-Test)"
+      mock: "PollenPay v2.0.1 Email Verification API (Debug-mock)" # lo-case "mock"
+    PPCustomerAPIName:
+      prod: "PollenPay v2 production Customer API"
+      test: "PollenPay v2.0.1 debug-test Customer API"
+      mock: "PollenPay v2.0.1 debug-mock Customer API"
+    PPCustomerAPIDescription:
+      prod: "PollenPay v2 production Customer API"
+      test: "Deployment for exporting PollenPay v2.0.1 debug-test Customer API"
+      mock: "Deployment for exporting PollenPay v2.0.1 debug-mock Customer API"
+    PPAdminAPIName:
+      prod: "PollenPayAdmin v3 prod Admin API"
+      test: "PollenPayAdmin v3 test Admin API"
+      mock: "PollenPayAdmin v3 mock Admin API"
+    PPAdminAPIDescription:
+      prod: "PollenPayAdmin v3 prod Admin API"
+      test: "PollenPayAdmin v3 test Admin API"
+      mock: "PollenPayAdmin v3 mock Admin API"
+  InstanceMode2Env:
+    stripeKey:
+      prod: "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"
+      test: "sk_test_51JZFNyLoSG0gnoWB5CFl3dpVaUUDe8oW0mzLNjiLHcbfEHuyRrJu4ZxE7NQvWh8yjItouarKswjcuL3ZvK5ilcU7004pmxdrTm"
+      mock: "sk_test_51H9pfsLf6bScP1MiHBaZcgqIkyUWPbsm5VTCt377zHiYrGWh5fyTtcPT0QHBK5xpiVGroJnR0ElaSBYK1n2FszmY00ULuQF8Om"
+    maintenanceSwitch:
+      prod: "0"
+      test: "0"
+      mock: "0"
+    maxTotalAmount:
+      prod: "100000"
+      test: "25000"
+      mock: "25000"
+    MYSQLCFG:
+      prod: "mysql://admin:UitBi73sqVnOWrkCL8pQ@pp-prod.cyoxaajiz0uw.eu-west-2.rds.amazonaws.com/v2-production"
+      test: "mysql://admin:UkL3hADM1lQMNddrpBPi@pp-dev.cyoxaajiz0uw.eu-west-2.rds.amazonaws.com/v201-debug-test"
+      mock: "mysql://root@mysql-local/v201-debug-mock"
+    RuntimeNode:
+      prod: nodejs16.x
+      test: nodejs16.x
+      mock: nodejs16.x
+
+Conditions:
+  IsProd: !Equals [!Ref InstanceMode, prod]
+
+Globals:
+  Function:
+    Environment:
+      Variables:
+        stageIV: d444e55aaff26a04ad8aef0e2e057664
+        stageAccessKey: 03412a8d050a3be108856643b61b130c34350916537d8c381e61d1ad8cf21102
+        stageSign: 46e0a1cabb7daa21c86edea0bd28f75d881c77f0833e5cd785abead6075feb4f
+        accessExpiry: 9*24*60*60*1000
+        sessionExpiry: 5*60*1000
+        refreshExpiry: 90*24*60*60*1000
+        otpExpiry: 2*60*1000
+        minAmount: 500
+        loanCap: 4
+        minTotalAmount: 2000
+        maxTotalAmount: !FindInMap [InstanceMode2Env, maxTotalAmount, !Ref InstanceMode]
+        defaultAllowance: 25000
+        lateFeeFlat: 0
+        lateFeePercentage: 5
+        defaultPeriod: 14*24*60*60*1000
+        defaultRepaymentsCount: 4
+        stripeKey: !FindInMap [InstanceMode2Env, stripeKey, !Ref InstanceMode]
+        lerexUser: TestUser_85803
+        lerexPass: VMW2CRBP7LQ9NSVSSWPM3MW4RYX02UX9I1B768M4BROKJHORTG
+        lerexSecretName: Lerex
+        opexSecretName: Lerex_Live
+        virtCardSecretName: Lerex_Virtual-Cards
+        support: 'support@pollenpay.com'
+        mailerFunction: 'pollen_mailer_function'
+        httpClientFunction: 'util_http_client'
+        upcomingPaymentNotification2: 24*60*60*1000
+        upcomingPaymentNotification1: 3*24*60*60*1000
+        directDebitCheckPeriod: 10*24*60*60*1000
+        referenceLifecycle: 10*356*24*60*60*1000
+        paymentMethodMaxCount: 4
+        # TODO why this is fixed here, may it be replaced with !Sub ${AWS::Region} ?
+        AWSRegion: eu-west-2
+        matiUser: '5ef397de6ed9ed001b3a60e5'
+        matiPass: 'VDM04AJ85XFZRY1TGNERK40GZJJ4MH7T'
+        mode: !Ref InstanceMode
+        walletUnlockPeriod: 10*60*1000
+        urlToFormdata: util_kyc_upload
+        bucket: user-assets-pp03uat
+        firstReminderSecondsBefore: 3*24*60*60
+        secondReminderSecondsBefore: 30*60
+        maintenanceSwitch: !FindInMap [InstanceMode2Env, maintenanceSwitch, !Ref InstanceMode]
+        prodTestUser: 447596955453
+        opexAccountID: '3866bdc9-99b3-48f2-97f6-561d79096e8a'
+        MYSQLCFG: !FindInMap [InstanceMode2Env, MYSQLCFG, !Ref InstanceMode]
+
+Resources:
+  userTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !If [IsProd, "bnpl-production-users", !Ref "AWS::NoValue"]
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        -
+          AttributeName: "user"
+          AttributeType: "N"
+        -
+          AttributeName: "record"
+          AttributeType: "S"
+        -
+          AttributeName: "email"
+          AttributeType: "S"
+        -
+          AttributeName: "recoveryNumber"
+          AttributeType: "N"
+        -
+          AttributeName: "lerexID"
+          AttributeType: "S"
+      KeySchema:
+        -
+          AttributeName: "user"
+          KeyType: "HASH"
+        -
+          AttributeName: "record"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "10"
+        WriteCapacityUnits: "10"
+      GlobalSecondaryIndexes:
+        -
+          IndexName: "email"
+          KeySchema:
+            -
+              AttributeName: "email"
+              KeyType: "HASH"
+          Projection:
+            NonKeyAttributes:
+              - "emailConfirmed"
+            ProjectionType: "INCLUDE"
+          ProvisionedThroughput:
+            ReadCapacityUnits: "10"
+            WriteCapacityUnits: "10"
+        -
+          IndexName: "recovery"
+          KeySchema:
+            -
+              AttributeName: "recoveryNumber"
+              KeyType: "HASH"
+          Projection:
+            NonKeyAttributes:
+              - "recoveryStatus"
+            ProjectionType: "INCLUDE"
+          ProvisionedThroughput:
+            ReadCapacityUnits: "10"
+            WriteCapacityUnits: "10"
+        -
+          IndexName: "lerexID"
+          KeySchema:
+            -
+              AttributeName: "lerexID"
+              KeyType: "HASH"
+          Projection:
+            ProjectionType: "KEYS_ONLY"
+          ProvisionedThroughput:
+            ReadCapacityUnits: "10"
+            WriteCapacityUnits: "10"
+
+  loanTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !If [IsProd, "bnpl-production-loans", !Ref "AWS::NoValue"]
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        -
+          AttributeName: "loanStateID"
+          AttributeType: "S"
+        -
+          AttributeName: "userID"
+          AttributeType: "N"
+        -
+          AttributeName: "archived"
+          AttributeType: "N"
+      KeySchema:
+        -
+          AttributeName: "userID"
+          KeyType: "HASH"
+        -
+          AttributeName: "loanStateID"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "10"
+        WriteCapacityUnits: "10"
+      LocalSecondaryIndexes:
+        -
+          IndexName: "archived"
+          KeySchema:
+            -
+              AttributeName: "userID"
+              KeyType: "HASH"
+            -
+              AttributeName: "archived"
+              KeyType: "RANGE"
+          Projection:
+            ProjectionType: "ALL"
+
+  tokenTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !If [IsProd, "bnpl-production-tokens", !Ref "AWS::NoValue"]
+      AttributeDefinitions:
+        -
+          AttributeName: "user"
+          AttributeType: "N"
+        -
+          AttributeName: "expiration"
+          AttributeType: "N"
+      KeySchema:
+        -
+          AttributeName: "user"
+          KeyType: "HASH"
+        -
+          AttributeName: "expiration"
+          KeyType: "RANGE"
+      TimeToLiveSpecification:
+        AttributeName: "expiration"
+        Enabled: true
+      ProvisionedThroughput:
+        ReadCapacityUnits: "10"
+        WriteCapacityUnits: "10"
+
+  merchantTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !If [IsProd, "bnpl-production-merchants", !Ref "AWS::NoValue"]
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        -
+          AttributeName: "merchant"
+          AttributeType: "S"
+        -
+          AttributeName: "record"
+          AttributeType: "S"
+        -
+          AttributeName: "category"
+          AttributeType: "N"
+      KeySchema:
+        -
+          AttributeName: "merchant"
+          KeyType: "HASH"
+        -
+          AttributeName: "record"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "10"
+        WriteCapacityUnits: "10"
+      GlobalSecondaryIndexes:
+        -
+          IndexName: "category"
+          KeySchema:
+            -
+              AttributeName: "category"
+              KeyType: "HASH"
+          Projection:
+            ProjectionType: "ALL"
+          ProvisionedThroughput:
+            ReadCapacityUnits: "10"
+            WriteCapacityUnits: "10"
+
+  eventTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !If [IsProd, "bnpl-production-events", !Ref "AWS::NoValue"]
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        -
+          AttributeName: "txID"
+          AttributeType: "S"
+        -
+          AttributeName: "timestamp"
+          AttributeType: "N"
+        -
+          AttributeName: "type"
+          AttributeType: "S"
+      KeySchema:
+        -
+          AttributeName: "txID"
+          KeyType: "HASH"
+        -
+          AttributeName: "timestamp"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "10"
+        WriteCapacityUnits: "10"
+      GlobalSecondaryIndexes:
+        -
+          IndexName: "type"
+          KeySchema:
+            -
+              AttributeName: "type"
+              KeyType: "HASH"
+            -
+              AttributeName: "timestamp"
+              KeyType: "RANGE"
+          Projection:
+            ProjectionType: "ALL"
+          ProvisionedThroughput:
+            ReadCapacityUnits: "10"
+            WriteCapacityUnits: "10"
+
+  xdepsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      # https://github.com/aws/aws-lambda-builders/blob/master/aws_lambda_builders/workflows/custom_make/DESIGN.md
+      BuildMethod: makefile
+    Properties:
+      LayerName: pp-xdeps
+      Description: Common external dependencies for other layers and functions (both npmjs and python)
+      ContentUri: ./layers/xdepsLayer
+      CompatibleRuntimes:
+        - !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+        - python3.7
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+
+  utilsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: pp-utils
+      Description: Common utilities for PP
+      ContentUri: ./layers/commonLayer
+      CompatibleRuntimes:
+        - !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+
+  paymentsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: pp-banking
+      Description: Stripe and Lerex integrations for PP
+      ContentUri: ./layers/paymentsLayer
+      CompatibleRuntimes:
+        - !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+
+  migrateDirect:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: migrateDirect.handler
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: merchantPopulators
+      Description: >-
+        Populates direct merchants given source
+      MemorySize: 2048
+      Timeout: 15
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+      Environment:
+        Variables:
+          merchantTable: !Ref merchantTable
+
+  confirmEmail:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: index.handler
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: users/emailConfirmation
+      Description: >-
+        Checks if the email confirmation params are valid and validates the email
+      MemorySize: 1024
+      Timeout: 3
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /confirmemail
+            Method: GET
+            RestApiId: !Ref PPMailAPI
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+      Environment:
+        Variables:
+          userTable: !Ref userTable
+
+  PPMailAPI:
+    Type: 'AWS::Serverless::Api'
+    Properties:
+      Name: !FindInMap [InstanceMode2Title, PPMailAPIName, !Ref InstanceMode]
+      Description: 'Endpoints for links shared in emails'
+      OpenApiVersion: '3.0.0'
+      StageName: 'dev'
+      Cors:
+        AllowHeaders: "'Content-Type,X-Requested-With,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Pragma,User,AccessToken'"
+        AllowMethods: "'OPTIONS,GET'"
+        AllowOrigin: "'*'"
+        MaxAge: "'86400'"
+        AllowCredentials: false
+      Auth:
+        AddDefaultAuthorizerToCorsPreflight: false
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: "PPMailAPI"
+          version: "1.0"
+        x-definitions:
+          confirmEmailService:
+            type: object
+            x-amazon-apigateway-integration: &confirmEmailService
+              httpMethod: "POST"
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${confirmEmail.Arn}/invocations"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+        security: [] # No auth by default (if enable by default CORS failed for Preflight OPTIONS request)
+        paths:
+          /confirmemail:
+            get:
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    text/html:
+                      schema:
+                        $ref: "#/components/schemas/empty"
+              x-amazon-apigateway-integration: *confirmEmailService
+        components:
+          schemas:
+            empty:
+              title: "Empty Schema"
+              type: object
+
+  mailerFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: script.lambda_handler
+      Runtime: python3.7
+      CodeUri: mailer
+      Description: >-
+        Sends mail from support@pollenpay.com
+      MemorySize: 512
+      Timeout: 15
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+
+  apnsService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: post.lambda_handler
+      Runtime: python3.7
+      CodeUri: apns
+      Description: >-
+        Sends an APNS payload to the specified device
+      MemorySize: 512
+      Timeout: 3
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Layers:
+        - !Ref xdepsLayer
+
+  urlToS3:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: url_to_s3.lambda_handler
+      Runtime: python3.7
+      CodeUri: imageUploader
+      Description: >-
+        Resizes and uploads a file from a specified endpoint to S3
+      MemorySize: 512
+      Timeout: 15
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Layers:
+        - !Ref xdepsLayer
+
+  authpp3:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: authoriser.handler
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: auth
+      Description: >-
+        Validates access tokens for customer clients; passes through the user number
+      MemorySize: 1024
+      Timeout: 10
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /MyResource
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+      Environment:
+        Variables:
+          tokenTable: !Ref tokenTable
+          userTable: !Ref userTable
+
+  authService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: controller.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: auth
+      Description: >-
+        Handler authorisation, phone login & OTP verification, session and access tokens.
+      MemorySize: 1024
+      Timeout: 10
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /*
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          tokenTable: !Ref tokenTable
+          userTable: !Ref userTable
+          loanTable: !Ref loanTable
+
+  KYCService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: controller.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: kyc
+      Description: >-
+        Handles fetching and updating user KYC statuses.
+      MemorySize: 1024
+      Timeout: 10
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+        - !Ref paymentsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /*
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          userTable: !Ref userTable
+          urlToS3: !Ref urlToS3
+          apnsService: !Ref apnsService
+
+  userService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: controller.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: users
+      Description: >-
+        Handles fetching and updating user data.
+      MemorySize: 1024
+      Timeout: 10
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+        - !Ref paymentsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /*
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          userTable: !Ref userTable
+          baseURL: !Ref PPMailAPI
+          mailerFunction: !Ref mailerFunction
+
+  merchantService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: controller.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: merchants
+      Description: >-
+        Handles fetching and filtering merchants.
+      MemorySize: 8192
+      Timeout: 30
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+        - !Ref paymentsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /*
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          merchantTable: !Ref merchantTable
+
+  cardsService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: controller.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: cards
+      Description: >-
+        Handles managing payment methods (Stripe attached cards).
+      MemorySize: 2038
+      Timeout: 10
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+        - !Ref paymentsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /*
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          userTable: !Ref userTable
+
+  loansService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: controller.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: loans
+      Description: >-
+        Handles managing loans.
+      MemorySize: 8192
+      Timeout: 90
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+        - !Ref paymentsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /*
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          userTable: !Ref userTable
+          loanTable: !Ref loanTable
+          merchantTable: !Ref merchantTable
+          eventTable: !Ref eventTable
+          urlToFormdata: util_kyc_upload
+          mailerFunction: !Ref mailerFunction
+          apnsService: !Ref apnsService
+
+  eventInterfaceFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: index.handler
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: events
+      Description: >-
+        Determines what events must be triggered; invokes corresponding handlers
+      MemorySize: 8192
+      Timeout: 900
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Environment:
+        Variables:
+          lockWalletFunction: !Ref loansService
+          loanServiceFunction: !Ref loansService
+          userTable: !Ref userTable
+          loanTable: !Ref loanTable
+          merchantTable: !Ref merchantTable
+          eventTable: !Ref eventTable
+          mailerFunction: !Ref mailerFunction
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+      Events:
+        InvocationLevel:
+          Type: Schedule
+          Properties:
+            Schedule: cron(* * * * ? *)
+
+  postPushToken:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: index.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: users/postPushToken
+      Description: >-
+        Records device ID and device tokens to enable APNS delivery
+      MemorySize: 1024
+      Timeout: 10
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /postpushtoken
+            Method: POST
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          userTable: !Ref userTable
+
+  psa:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: index.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      CodeUri: psa
+      Description: >-
+        Function to send PSAs.
+      MemorySize: 2048
+      Timeout: 10
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /*
+            Method: ANY
+            RestApiId: !Ref PPCustomerAPI
+      Environment:
+        Variables:
+          userTable: !Ref userTable
+          apnsService: !Ref apnsService
+
+  PPCustomerAPI:
+    Type: 'AWS::Serverless::Api'
+    Properties:
+      Name: !FindInMap [InstanceMode2Title, PPCustomerAPIName, !Ref InstanceMode]
+      Description: !FindInMap [InstanceMode2Title, PPCustomerAPIDescription, !Ref InstanceMode]
+      OpenApiVersion: '3.0.0'
+      StageName: 'stage'
+      Cors:
+        AllowHeaders: "'Content-Type,X-Requested-With,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Pragma,User,AccessToken'"
+        AllowMethods: "'OPTIONS,GET,POST,PUT,DELETE'"
+        AllowOrigin: "'*'"
+        MaxAge: "'86400'"
+        AllowCredentials: false
+      Auth:
+        AddDefaultAuthorizerToCorsPreflight: false
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: PPCustomerAPI
+          version: 2.0.1
+        x-definitions:
+          authService:
+            type: object
+            x-amazon-apigateway-integration: &authService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${authService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+          userService:
+            type: object
+            x-amazon-apigateway-integration: &userService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${userService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+          getKYCResourseService:
+            type: object
+            x-amazon-apigateway-integration: &getKYCResourseService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${KYCService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+          KYCService:
+            type: object
+            x-amazon-apigateway-integration: &KYCService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${KYCService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+          merchantService:
+            type: object
+            x-amazon-apigateway-integration: &merchantService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${merchantService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+          cardsService:
+            type: object
+            x-amazon-apigateway-integration: &cardsService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${cardsService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+          loansService:
+            type: object
+            x-amazon-apigateway-integration: &loansService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${loansService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+          postPushTokenService:
+            type: object
+            x-amazon-apigateway-integration: &postPushTokenService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${postPushToken.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+        security: [] # No auth by default (if enable by default CORS failed for Preflight OPTIONS request)
+        paths:
+          /register:
+            post:
+              operationId: register
+              tags: [ Auth ]
+              summary: Request an SMS and session token for login/signup (PPApi+Register.swift)
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/registerRequest'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/registerResponse"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *authService
+          /verify:
+            post:
+              operationId: verify
+              tags: [ Auth ]
+              summary: Validate SMS code and get accessToken (PPApi+Verify.swift)
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/verifyRequest'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/verifyResponse"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *authService
+          /refreshtoken:
+            post:
+              operationId: refreshToken
+              tags: [ Auth ]
+              summary: Refreshes the access token (PPApi+RefreshToken.swift)
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/verifyResponse"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *authService
+          /getkycresource:
+            post:
+              operationId: kycResourse
+              summary: Submits verification ID of ID/address verification to the DB; if ID/passport then returns name object and date of birth (PPApi+GetKYCResource.swift)
+              security: [ AuthPP3: [] ]
+              tags: [ KYC ]
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/getKYCresourceRequest'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/getKYCresourceResponse"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *getKYCResourseService
+          /kyc/id:
+            post:
+              operationId: kycId
+              summary: Accepts Mati Identity ID; updates ID check statuses; returns names and DoB if applicable
+              security: [ AuthPP3: [] ]
+              tags: [ KYC ]
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/getKYCresourceRequest'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/getKYCresourceResponse"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *KYCService
+          /kyc/address:
+            post:
+              operationId: kycAddress
+              summary: Accepts Mati Identity ID; updates proof of address  check statuses.
+              security: [ AuthPP3: [] ]
+              tags: [ KYC ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *KYCService
+          /kyc/status:
+            get:
+              operationId: kycStatus
+              summary: Returns a checklist.
+              security: [ AuthPP3: [] ]
+              tags: [ KYC ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *KYCService
+          /kyc/webhook/id:
+            post:
+              operationId: kycWebhookId
+              summary: Receives Metamap events to update ID status.
+              tags: [ KYC ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *KYCService
+          /kyc/webhook/address:
+            post:
+              operationId: kycWebhookAddress
+              summary: Receives Metamap events to update address status.
+              tags: [ KYC ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *KYCService
+          /updateuser:
+            post:
+              operationId: updateUser
+              summary: Updating user sex, address, deleting profile image, notification settings, marketing settings (PPApi+DeleteProfileImage.swift, PPApi+UpdateUser.swift)
+              security: [ AuthPP3: [] ]
+              tags: [ Users ]
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/updateUser'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/getUser"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *userService
+          /uploadprofileimage:
+            post:
+              operationId: uploadProfileImage
+              summary: Uploads a base64 encoded image (PPApi+UploadImage.swift)
+              security: [ AuthPP3: [] ]
+              tags: [ Users ]
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/updateUser'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/user"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *userService
+          /resendconfirmation:
+            post:
+              operationId: resendConfirmation
+              summary: Updates or creates user.
+              security: [ AuthPP3: [] ]
+              tags: [ Users ]
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/updateUser'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/getUser"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *userService
+          /joinwaitlist:
+            post:
+              operationId: joinWaitList
+              summary: Sets waitlist to true, fetches the updated user.
+              security: [ AuthPP3: [] ]
+              tags: [ Users ]
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/updateUser'
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/getUser"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *userService
+          /getuser:
+            get:
+              operationId: getUser
+              summary: Fetches a user.
+              security: [ AuthPP3: [] ]
+              tags: [ Users ]
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/getUser"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *userService
+          /merchants:
+            get:
+              operationId: merchants
+              summary: Get all Merchants
+              tags: [ Merchants ]
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/merchants"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *merchantService
+          /categories:
+            get:
+              operationId: categories
+              tags: [ Merchants ]
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/merchantsByCategory"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *merchantService
+          /listcategories:
+            get:
+              operationId: listCategories
+              tags: [ Merchants ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *merchantService
+          /getmerchants:
+            get:
+              operationId: getMerchants
+              tags: [ Merchants ]
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/legacyMerchantsByCategory"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *merchantService
+          /categories/{category}:
+            parameters:
+            - name: category
+              in: path
+              required: true
+              schema:
+                type: string
+            get:
+              operationId: category
+              tags: [ Merchants ]
+              responses:
+                "200":
+                  description: "200 response"
+                  content:
+                    application/json:
+                      schema:
+                        $ref: "#/components/schemas/merchantsWithLocation"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *merchantService
+          /cards:
+            get:
+              operationId: getCards
+              security: [ AuthPP3: [] ]
+              tags: [ Cards ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *cardsService
+            post:
+              operationId: createCard
+              security: [ AuthPP3: [] ]
+              tags: [ Cards ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *cardsService
+            put:
+              operationId: setCard
+              security: [ AuthPP3: [] ]
+              tags: [ Cards ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *cardsService
+            delete:
+              operationId: deleteCard
+              security: [ AuthPP3: [] ]
+              tags: [ Cards ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *cardsService
+          /newseti:
+            get:
+              operationId: newseti
+              security: [ AuthPP3: [] ]
+              tags: [ Cards ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *cardsService
+          /postloan:
+            post:
+              operationId: createLoan
+              security: [ AuthPP3: [] ]
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /webhook:
+            post:
+              operationId: webhook
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /getloan:
+            post:
+              operationId: getLoan
+              security: [ AuthPP3: [] ]
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /getparams:
+            get:
+              operationId: getParams
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /getrepaymentsscheme:
+            post:
+              operationId: getRepaymentsScheme
+              security: [ AuthPP3: [] ]
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /checkloancap:
+            get:
+              operationId: checkLoanCap
+              security: [ AuthPP3: [] ]
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /getpurchases:
+            post:
+              operationId: getpurchases
+              security: [ AuthPP3: [] ]
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /getPurchases:
+            post:
+              operationId: getPurchases
+              security: [ AuthPP3: [] ]
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /earlyrepay:
+            post:
+              operationId: earlyRepay
+              security: [ AuthPP3: [] ]
+              tags: [ Loans ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /wallet:
+            get:
+              operationId: getWallet
+              security: [ AuthPP3: [] ]
+              tags: [ Wallet ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /wallet/activate:
+            post:
+              operationId: activateWallet
+              security: [ AuthPP3: [] ]
+              tags: [ Wallet ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /wallet/unlock:
+            post:
+              operationId: unlockWallet
+              security: [ AuthPP3: [] ]
+              tags: [ Wallet ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /wallet/checkkyc:
+            get:
+              operationId: checkKYC
+              security: [ AuthPP3: [] ]
+              tags: [ Wallet ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *loansService
+          /postpushtoken:
+            post:
+              operationId: pushToken
+              security: [ AuthPP3: [] ]
+              tags: [ Auth ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *postPushTokenService
+          /checkemail:
+            post:
+              operationId: checkEmail
+              security: [ AuthPP3: [] ]
+              tags: [ Users ]
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+              x-amazon-apigateway-integration: *userService
+        components:
+          schemas:
+            empty:
+              title: "Empty Schema"
+              type: object
+            error:
+              title: "Error Schema"
+              type: object
+              properties:
+                errorDisplay:
+                  type: string
+                  description: "Tell whether to show error message in a modal view, separate\
+                    \ page, or as an error state in the form"
+                  enum:
+                  - "errorPage"
+                  - "modal"
+                  - "formErrorState"
+                errorCode:
+                  type: "number"
+                  description: "Enum for the iOS client to handle errors."
+                message:
+                  type: string
+                error:
+                  type: boolean
+                  default: true
+            registerResponse:
+              type: object
+              properties:
+                body:
+                  type: object
+                  properties:
+                    session:
+                      type: string
+                  required:
+                    - "session"
+                error:
+                  type: boolean
+              required:
+                - "body"
+                - "error"
+            user:
+              type: object
+              properties:
+                details:
+                  type: object
+                  properties:
+                    address:
+                      type: object
+                      properties:
+                        locality:
+                          type: string
+                        street_number:
+                          type: string
+                        route:
+                          type: string
+                        administrative_division:
+                          type: string
+                        postal_code:
+                          type: string
+                      required:
+                        - "locality"
+                        - "street_number"
+                        - "route"
+                        - "administrative_division"
+                        - "postal_code"
+                    dob:
+                      type: string
+                    email:
+                      type: string
+                    name:
+                      type: object
+                      properties:
+                        surname:
+                          type: string
+                        givenName:
+                          type: string
+                        middleName:
+                          type: string
+                      required:
+                        - "givenName"
+                    profileURL:
+                      type: string
+                    sex:
+                      type: string
+                  required:
+                    - "address"
+                    - "dob"
+                    - "email"
+                    - "name"
+                    - "profileURL"
+                    - "sex"
+                settings:
+                  type: object
+                  properties:
+                    marketing:
+                      type: object
+                      properties:
+                        email:
+                          type: boolean
+                        push:
+                          type: boolean
+                      required:
+                        - "email"
+                        - "push"
+                    notifications:
+                      type: object
+                      properties:
+                        sms:
+                          type: boolean
+                        push:
+                          type: boolean
+                      required:
+                        - "sms"
+                        - "push"
+                  required:
+                    - "marketing"
+                    - "notifications"
+                recovery:
+                  nullable: true
+                  type: object
+                  properties:
+                    number:
+                      type: string
+                    status:
+                      type: string
+                primary:
+                  type: object
+                  properties:
+                    number:
+                      type: string
+                    status:
+                      type: string
+                  required:
+                    - "number"
+                    - "status"
+              required:
+                - "details"
+                - "settings"
+                - "primary"
+            registerRequest:
+              type: object
+              properties:
+                user:
+                  type: string
+              required:
+                - "user"
+            verifyRequest:
+              type: object
+              properties:
+                user:
+                  type: string
+                code:
+                  type: string
+                session:
+                  type: string
+              required:
+                - "user"
+                - "code"
+                - "session"
+            verifyResponse:
+              type: object
+              properties:
+                body:
+                  type: object
+                  properties:
+                    newUserFlow:
+                      type: boolean
+                    user:
+                      nullable: true
+                      type: object
+                      properties:
+                        schema:
+                          $ref: '#/components/schemas/user'
+                    activeCard:
+                      type: boolean
+                    refreshToken:
+                      type: string
+                    accessToken:
+                      type: string
+                  required:
+                    - "newUserFlow"
+                    - "refreshToken"
+                    - "accessToken"
+                    - "activeCard"
+                error:
+                  type: boolean
+              required:
+                - "body"
+                - "error"
+            getKYCresourceRequest:
+              type: object
+              properties:
+                verificationID:
+                  type: string
+            updateUser:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    schema:
+                      $ref: '#/components/schemas/user'
+            getKYCresourceResponse:
+              type: object
+              properties:
+                body:
+                  type: object
+                  properties:
+                    givenName:
+                      type: string
+                    middleName:
+                      type: string
+                    surname:
+                      type: string
+                    dob:
+                      type: string
+                    address:
+                      type: object
+                      properties:
+                        route:
+                          type: string
+                        street_number:
+                          type: string
+                        locality:
+                          type: string
+                        administrative_division:
+                          type: string
+                        postal_code:
+                          type: string
+                  required:
+                    - "givenName"
+                error:
+                  type: boolean
+              required:
+                - "body"
+                - "error"
+            merchants:
+              title: "Full list of merchants"
+              type: object
+              properties:
+                error:
+                  type: boolean
+                body:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          Merchant:
+                            type: string
+                          ID:
+                            type: string
+                          index:
+                            type: integer
+                          ImageURL:
+                            type: string
+                          LogoURL:
+                            type: string
+                          Link:
+                            type: string
+                          deal:
+                            nullable: true
+                          category:
+                            type: string
+                          subcategory:
+                            type: array
+                            items: {}
+                          inStore:
+                            type: boolean
+                          online:
+                            type: boolean
+                          direct:
+                            type: array
+                            nullable: true
+                            items:
+                              type: object
+                              properties:
+                                index:
+                                  type: integer
+                                name:
+                                  type: string
+                                items:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      index:
+                                        type: integer
+                                      imageURL:
+                                        type: string
+                                      totalPrice:
+                                        type: integer
+                                      taxPercent:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      productID:
+                                        type: string
+                                      priceSansTax:
+                                        type: integer
+                        required:
+                          - "Merchant"
+                          - "ID"
+                          - "index"
+                          - "ImageURL"
+                          - "LogoURL"
+                          - "Link"
+                          - "category"
+                          - "subcategory"
+                          - "online"
+                  required:
+                    - "items"
+              required:
+                - "error"
+                - "body"
+            merchantsByCategory:
+              title: "Merchant list grouped by categories"
+              type: object
+              properties:
+                error:
+                  type: boolean
+                body:
+                  type: object
+                  properties:
+                    Items:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          category:
+                            type: string
+                          index:
+                            type: integer
+                          items:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                Merchant:
+                                  type: string
+                                ID:
+                                  type: string
+                                index:
+                                  type: integer
+                                ImageURL:
+                                  type: string
+                                LogoURL:
+                                  type: string
+                                Link:
+                                  type: string
+                                deal:
+                                  nullable: true
+                                category:
+                                  type: string
+                                subcategory:
+                                  type: array
+                                  items: {}
+                                inStore:
+                                  type: boolean
+                                online:
+                                  type: boolean
+                                direct:
+                                  type: array
+                                  nullable: true
+                                  items:
+                                    type: object
+                                    properties:
+                                      index:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      items:
+                                        type: array
+                                        items:
+                                          type: object
+                                          properties:
+                                            index:
+                                              type: integer
+                                            imageURL:
+                                              type: string
+                                            totalPrice:
+                                              type: integer
+                                            taxPercent:
+                                              type: integer
+                                            name:
+                                              type: string
+                                            productID:
+                                              type: string
+                                            priceSansTax:
+                                              type: integer
+                              required:
+                                - "Merchant"
+                                - "ID"
+                                - "index"
+                                - "ImageURL"
+                                - "LogoURL"
+                                - "Link"
+                                - "category"
+                                - "subcategory"
+                                - "online"
+                        required:
+                          - "category"
+                          - "index"
+                          - "items"
+                  required:
+                    - "Items"
+              required:
+                - "error"
+                - "body"
+            legacyMerchantsByCategory:
+              title: "Merchant list grouped by categories (used on the iOS client)"
+              type: object
+              properties:
+                error:
+                  type: boolean
+                body:
+                  type: object
+                  properties:
+                    Items:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          category:
+                            type: string
+                          index:
+                            type: integer
+                          items:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                Merchant:
+                                  type: string
+                                ID:
+                                  type: string
+                                index:
+                                  type: integer
+                                ImageURL:
+                                  type: string
+                                LogoURL:
+                                  type: string
+                                Link:
+                                  type: string
+                                deal:
+                                  nullable: true
+                                category:
+                                  type: string
+                                direct:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      index:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      items:
+                                        type: array
+                                        items:
+                                          type: object
+                                          properties:
+                                            index:
+                                              type: integer
+                                            imageURL:
+                                              type: string
+                                            totalPrice:
+                                              type: integer
+                                            taxPercent:
+                                              type: integer
+                                            name:
+                                              type: string
+                                            productID:
+                                              type: string
+                                            priceSansTax:
+                                              type: integer
+                                          required:
+                                            - "index"
+                                            - "imageURL"
+                                            - "totalPrice"
+                                            - "taxPercent"
+                                            - "name"
+                                            - "productID"
+                                            - "priceSansTax"
+                                    required:
+                                      - "index"
+                                      - "name"
+                                      - "items"
+                              required:
+                                - "Merchant"
+                                - "ID"
+                                - "index"
+                                - "ImageURL"
+                                - "LogoURL"
+                                - "Link"
+                                - "deal"
+                                - "category"
+                                - "direct"
+                        required:
+                          - "category"
+                          - "index"
+                          - "items"
+                  required:
+                    - "Items"
+              required:
+                - "error"
+                - "body"
+            merchantsWithLocation:
+              title: "List of in-store merchants with location, filtered by category"
+              type: object
+              properties:
+                error:
+                  type: boolean
+                body:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          Merchant:
+                            type: string
+                          ID:
+                            type: string
+                          index:
+                            type: integer
+                          ImageURL:
+                            type: string
+                          LogoURL:
+                            type: string
+                          Link:
+                            type: string
+                          deal:
+                            nullable: true
+                          category:
+                            type: string
+                          subcategory:
+                            type: array
+                            items: {}
+                          inStore:
+                            type: boolean
+                          online:
+                            type: boolean
+                          direct:
+                            type: boolean
+                          popular:
+                            type: boolean
+                          created:
+                            type: string
+                          lat:
+                            type: "number"
+                          lng:
+                            type: "number"
+                          address:
+                            type: string
+                        required:
+                          - "Merchant"
+                          - "ID"
+                          - "index"
+                          - "ImageURL"
+                          - "LogoURL"
+                          - "Link"
+                          - "deal"
+                          - "category"
+                          - "subcategory"
+                          - "inStore"
+                          - "online"
+                          - "created"
+                          - "lat"
+                          - "lng"
+                          - "address"
+                  required:
+                    - "items"
+              required:
+                - "error"
+                - "body"
+            getUser:
+              type: object
+              properties:
+                body:
+                  type: object
+                  properties:
+                    schema:
+                      $ref: '#/components/schemas/user'
+                error:
+                  type: boolean
+              required:
+                - "body"
+                - "error"
+          responses:
+            empty:
+              description: "Empty response"
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/empty"
+            error:
+              description: "Invalid payload"
+              content:
+                  application/json:
+                    schema:
+                      $ref: "#/components/schemas/error"
+          securitySchemes:
+            AuthPP3:
+              type: "apiKey"
+              name: "Unused"
+              in: "header"
+              x-amazon-apigateway-authtype: "custom"
+              x-amazon-apigateway-authorizer:
+                authorizerUri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${authpp3.Arn}/invocations"
+                authorizerCredentials: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+                authorizerResultTtlInSeconds: 600
+                identitySource: "method.request.header.AccessToken, method.request.header.User"
+                type: "request"
+        x-amazon-apigateway-gateway-responses:
+          INVALID_SIGNATURE:
+            statusCode: 403
+            responseTemplates:
+              application/json: "{\"message\":$context.error.messageString, \"error\": true, \"errorCode\":401 }"
+          EXPIRED_TOKEN:
+            statusCode: 403
+            responseTemplates:
+              application/json: "{\"message\":$context.error.messageString, \"error\": true, \"errorCode\":401 }"
+          INVALID_API_KEY:
+            statusCode: 403
+            responseTemplates:
+              application/json: "{\"message\":$context.error.messageString, \"error\": true, \"errorCode\":401 }"
+          UNAUTHORIZED:
+            statusCode: 401
+            responseTemplates:
+              application/json: "{\"message\":$context.error.messageString,\n\"error\": true,\n\"errorCode\":401\n}"
+          DEFAULT_5XX:
+            responseTemplates:
+              application/json: "{\"message\":$context.error.messageString,\n\"error\": true,\n\"errorCode\":84\n}"
+          MISSING_AUTHENTICATION_TOKEN:
+            statusCode: 403
+            responseTemplates:
+              application/json: "{\"message\":$context.error.messageString, \"error\": true, \"errorCode\":401 }"
+          DEFAULT_4XX:
+            responseTemplates:
+              application/json: "{\"message\":$context.error.messageString, \"error\": true, \"errorCode\":401 }"
+
+  PPAdminAuth:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: admin/auth
+      Handler: index.lambda
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      Description: Validates access tokens for admins, passes through the user number
+      MemorySize: 1024
+      Timeout: 10
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+
+  PPAdminService:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: admin/api
+      Handler: index.lambda
+      Runtime: !FindInMap [InstanceMode2Env, RuntimeNode, !Ref InstanceMode]
+      Description: Admin API single entrypoint for all methods
+      MemorySize: 1024
+      Timeout: 10
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+      Layers:
+        - !Ref xdepsLayer
+        - !Ref utilsLayer
+        - !Ref paymentsLayer
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /v3/admin/*
+            Method: ANY
+            RestApiId: !Ref PPAdminAPI
+
+  PPAdminAPI:
+    Type: 'AWS::Serverless::Api'
+    Properties:
+      Name: !FindInMap [InstanceMode2Title, PPAdminAPIName, !Ref InstanceMode]
+      Description: !FindInMap [InstanceMode2Title, PPAdminAPIDescription, !Ref InstanceMode]
+      OpenApiVersion: '3.0.0'
+      StageName: 'stage'
+      Cors:
+        AllowHeaders: "'Content-Type,X-Requested-With,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Pragma,User,AccessToken'"
+        AllowMethods: "'OPTIONS,GET,POST'"
+        AllowOrigin: "'*'"
+        MaxAge: "'86400'"
+        AllowCredentials: false
+      Auth:
+        AddDefaultAuthorizerToCorsPreflight: false
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: PPAdminAPI
+          version: 1.0.0
+        x-definitions:
+          adminService:
+            type: object
+            x-amazon-apigateway-integration: &adminService
+              uri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${PPAdminService.Arn}/invocations"
+              httpMethod: "POST"
+              responses:
+                default:
+                  statusCode: "200"
+              passthroughBehavior: "when_no_match"
+              contentHandling: "CONVERT_TO_TEXT"
+              type: "aws_proxy"
+        security: [] # No auth by default (if enable by default CORS failed for Preflight OPTIONS request)
+        paths:
+# --- USER
+          /v3/admin/model/user/add:
+            post:
+              operationId: userAdd
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Create user
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqUserAdd'
+              responses:
+                "200":
+                  $ref: "#/components/responses/userRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/user/row:
+            post:
+              operationId: userRow
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Get user
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqUserRow'
+              responses:
+                "200":
+                  $ref: "#/components/responses/userRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/user/upd:
+            post:
+              operationId: userUpd
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Edit user
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqUserUpd'
+              responses:
+                "200":
+                  $ref: "#/components/responses/userRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/user/del:
+            post:
+              operationId: userDel
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Delete user
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqDel'
+              responses:
+                "200":
+                  $ref: "#/components/responses/successEmpty"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/user/tbl:
+            post:
+              operationId: userTbl
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: List of users
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqUserTbl'
+              responses:
+                "200":
+                  $ref: "#/components/responses/userTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+# === USER
+# --- UTIL
+          /v3/admin/util/confirm/email:
+            post:
+              operationId: confirmEmail
+              security: [ AuthAdmin: [] ]
+              tags: [ Util ]
+              summary: Resend confirm letter to user email
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqConfirmEmail'
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/util/verify/email:
+            post:
+              operationId: verifyEmail
+              security: [ AuthAdmin: [] ]
+              tags: [ Util ]
+              summary: Verify email
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqVerifyEmail'
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/util/confirm/phone:
+            post:
+              operationId: confirmPhone
+              security: [ AuthAdmin: [] ]
+              tags: [ Util ]
+              summary: Resend confirm SMS to user phone
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqConfirmPhone'
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/util/verify/phone:
+            post:
+              operationId: verifyPhone
+              security: [ AuthAdmin: [] ]
+              tags: [ Util ]
+              summary: Resend confirm SMS to user phone
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqVerifyPhone'
+              responses:
+                "200":
+                  $ref: "#/components/responses/empty"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/util/search:
+            post:
+              operationId: search
+              security: [ AuthAdmin: [] ]
+              tags: [ Util ]
+              summary: Search in models
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqSearch'
+              responses:
+                "200":
+                  $ref: "#/components/responses/search"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/util/sqltbl:
+            post:
+              operationId: sqlTbl
+              security: [ AuthAdmin: [] ]
+              tags: [ Util ]
+              summary: Direct execure SQL
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqSqlTbl'
+              responses:
+                "200":
+                  $ref: "#/components/responses/sqlTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+# === UTIL
+# --- PAYMETH
+          /v3/admin/model/paymeth/row:
+            post:
+              operationId: paymethRow
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Get user payment method
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqPaymethRow'
+              responses:
+                "200":
+                  $ref: "#/components/responses/paymethRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/paymeth/tbl:
+            post:
+              operationId: paymethTbl
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: List of user payment methods
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqPaymethTbl'
+              responses:
+                "200":
+                  $ref: "#/components/responses/paymethTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+# === PAYMETH
+# --- LOAN
+          /v3/admin/model/loan/row:
+            post:
+              operationId: loanRow
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Get user loan
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanRow'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loanRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/loan/tbl:
+            post:
+              operationId: loanTbl
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: List of user loans
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanTbl'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loanTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/loan/adj:
+            post:
+              operationId: loanAdj
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Adjust list of user loan transactions
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanAdj'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loantrxTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+# === LOAN
+# --- LOANTRX
+          /v3/admin/model/loantrx/row:
+            post:
+              operationId: loantrxRow
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Get user loan transaction
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanTrxRow'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loantrxRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/loantrx/tbl:
+            post:
+              operationId: loantrxTbl
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: List of user loan transactions
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanTrxTbl'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loantrxTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+# === LOANTRX
+# --- LOANITEM
+          /v3/admin/model/loanitem/row:
+            post:
+              operationId: loanitemRow
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Get user loan item
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanItemRow'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loanitemRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/loanitem/tbl:
+            post:
+              operationId: loanitemTbl
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: List of user loan items
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanItemTbl'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loanitemTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+# === LOANITEM
+# --- LOANCITEM
+          /v3/admin/model/loancitem/row:
+            post:
+              operationId: loancitemRow
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: Get user loan custom item
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanCItemRow'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loancitemRow"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+          /v3/admin/model/loancitem/tbl:
+            post:
+              operationId: loancitemTbl
+              security: [ AuthAdmin: [] ]
+              tags: [ Model ]
+              summary: List of user loan custom items
+              requestBody:
+                required: true
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/reqLoanCItemTbl'
+              responses:
+                "200":
+                  $ref: "#/components/responses/loancitemTbl"
+                "400":
+                  $ref: "#/components/responses/error"
+                "500":
+                  $ref: "#/components/responses/error"
+              x-amazon-apigateway-integration: *adminService
+# === LOANCITEM
+        components:
+          schemas:
+# --- ELEMENTS
+            order:
+              title: Order by field
+              description: Available orders by field
+              type: string
+              enum: [asc, desc]
+            ofs:
+              title: Offset of begin row
+              description: Offset of begin row, by default 0
+              type: integer
+              format: int32
+              example: 20
+            len:
+              title: Count of returned rows
+              description: Count of returned rows, by default all
+              type: integer
+              format: int32
+              example: 20
+            func:
+              title: Filter function
+              description: >-
+                Filter function for list of objects
+                eq - Field (EQ)ual Value
+                not - Field (NOT) Equal Value
+                lt - Field (L)ess (T)hen Value
+                lte - Field (L)ess (T)hen or (E)qual Value
+                gt - Field (G)reater (T)hen Value
+                gte - Field (G)reater (T)hen or (E)qual Value
+                like - Field (LIKE) Value
+              type: string
+              default: eq # By default use Field (EQ)ual Value
+              enum:
+                - eq # Field (EQ)ual Value
+                - not # Field (NOT) Equal Value
+                - lt # Field (L)ess (T)hen Value
+                - lte # Field (L)ess (T)hen or (E)qual Value
+                - gt # Field (G)reater (T)hen Value
+                - gte # Field (G)reater (T)hen or (E)qual Value
+                - like # Field (LIKE) Value
+                - has # Field (HAS) Value inside string
+                - ihas # Field (I)ndepent case (HAS) Value inside string
+            val:
+              title: Value for function
+              description: Value of filter function for list of objects
+              type: string
+              nullable: true
+            arr:
+              title: Array of values for function
+              description: Array of values of filter function for list of objects, only for 'eq' and 'not'
+              type: array
+              nullable: true
+              items:
+                $ref: "#/components/schemas/val"
+# === ELEMENTS
+# --- REQUESTS
+            reqDel:
+              title: Delete model row
+              description: Request for delete one model row by id
+              type: object
+              properties:
+                id:
+                  description: Model ID
+                  type: string
+              required: [ id ]
+# === REQUESTS
+# --- RESPONSES
+            resSuccessEmpty:
+              title: Empty success response
+              description: Success response with res={}
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  description: Empty object
+                  type: object
+              required: [ err, res ]
+            resError:
+              title: Error response
+              description: Error response with error=true and res=null with error message and error code
+              type: object
+              properties:
+                err:
+                  description: True for error response
+                  type: boolean
+                  default: true
+                rej:
+                  description: Error info with error message and error code
+                  type: object
+                  properties:
+                    message:
+                      description: Error text message
+                      type: string
+                    code:
+                      description: Error code
+                      type: integer
+                      format: int32
+                  required: [ message, code ]
+              required: [ err, rej ]
+# --- RESPONSES
+# --- USER ELEMENTS
+            user:
+              title: User object
+              description: Returned user object
+              type: object
+              properties:
+                id:
+                  description: User ID
+                  type: string
+                name_first:
+                  description: First name of user
+                  type: string
+                  nullable: true
+                name_middle:
+                  description: Middle name of user
+                  type: string
+                  nullable: true
+                name_last:
+                  description: Last name of user
+                  type: string
+                  nullable: true
+                email:
+                  description: User Email
+                  type: string
+                  format: email
+                  nullable: true
+                email_confirmed:
+                  description: Is email confirmed
+                  type: boolean
+                  nullable: true
+                phone:
+                  description: User phone
+                  type: string
+                  format: phone
+                  nullable: true
+                phone_confirmed:
+                  description: Is phone confirmed
+                  type: boolean
+                  nullable: true
+                birthdate:
+                  description: Date of birth
+                  type: string
+                  format: date
+                  nullable: true
+                sex:
+                  description: User sex
+                  type: string
+                  nullable: true
+                created_dt:
+                  description: Datetime of create user
+                  type: string
+                  format: datetime
+                blocked:
+                  description: Flag of blocking
+                  type: boolean
+                  nullable: true
+                softblocked:
+                  description: "Flag of soft blocking: can pay, but can't buy"
+                  type: boolean
+                  nullable: true
+                stripe_id:
+                  description: ID of user at Stripe platform
+                  type: string
+                  nullable: true
+                lerex_id:
+                  description: ID of user at Lerex platform
+                  type: string
+                  nullable: true
+                primary_paymeth_sid:
+                  description: ID of primary payment method at provider
+                  type: string
+                  nullable: true
+                loans_latest_dt:
+                  description: Date of latest loan (readonly)
+                  type: string
+                  format: datetime
+                  nullable: true
+                loans_have_outstanding:
+                  description: Flag of existing outstanding loans (readonly)
+                  type: boolean
+                  nullable: true
+                loans_count_outstanding:
+                  description: Count of outstanding loans (readonly)
+                  type: integer
+                  format: int32
+                  nullable: true
+                loans_have_completed:
+                  description: Flag of existing completed loans (readonly)
+                  type: boolean
+                  nullable: true
+                loans_count_completed:
+                  description: Count of completed loans (readonly)
+                  type: integer
+                  format: int32
+                  nullable: true
+                loans_order_ids:
+                  description: List of all loan ids concat by spaces (readonly)
+                  type: string
+                  nullable: true
+                loans_pc_references:
+                  description: List of all loan purchase references concat by spaces (readonly)
+                  type: string
+                  nullable: true
+                loans_pp_references:
+                  description: List of all loan pollenpay references concat by spaces (readonly)
+                  type: string
+                  nullable: true
+                kyc_dt:
+                  description: Datetime of put document scans to KYC
+                  type: string
+                  format: datetime
+                  nullable: true
+                kyc_lerex_submitted:
+                  description: Flag of submit document scans to Lerex
+                  type: boolean
+                  nullable: true
+                passport_status:
+                  description: Status of verification identity (passport page with photo)
+                  type: string
+                  nullable: true
+                passport_filelink:
+                  description: Link to file of identity (passport page with photo)
+                  type: string
+                  nullable: true
+                passport_identity_id:
+                  description: ID of identity at MATI (passport page with photo)
+                  type: string
+                  nullable: true
+                passport_verification_id:
+                  description: ID of verify in MATI for identity (passport page with photo)
+                  type: string
+                  nullable: true
+                address_street_number:
+                  description: Address street and house number
+                  type: string
+                  nullable: true
+                address_locality:
+                  description: Address locality
+                  type: string
+                  nullable: true
+                address_route:
+                  description: Address route
+                  type: string
+                  nullable: true
+                address_administrative_division:
+                  description: Address administrative division
+                  type: string
+                  nullable: true
+                address_postal_code:
+                  description: Address postal code
+                  type: string
+                  nullable: true
+                address_status:
+                  description: Status of verification address (passport page with address)
+                  type: string
+                  nullable: true
+                address_filelink:
+                  description: Link to file of address in identity (passport page with address)
+                  type: string
+                  nullable: true
+                address_identity_id:
+                  description: ID of identity at MATI (passport page with address) (readonly)
+                  type: string
+                  nullable: true
+                address_verification_id:
+                  description: ID of verify in MATI for address (passport page with address)
+                  type: string
+                  nullable: true
+              required: [ id ]
+            userField:
+              title: One user field
+              description: One user field for return
+              type: string
+              enum:
+                - id
+                - name_first
+                - name_middle
+                - name_last
+                - email
+                - email_confirmed
+                - phone
+                - phone_confirmed
+                - birthdate
+                - sex
+                - created_dt
+                - blocked
+                - softblocked
+                - stripe_id
+                - lerex_id
+                - primary_paymeth_sid
+                - loans_latest_dt
+                - loans_have_outstanding
+                - loans_count_outstanding
+                - loans_have_completed
+                - loans_count_completed
+                - loans_order_ids
+                - loans_pc_references
+                - loans_pp_references
+                - kyc_dt
+                - kyc_lerex_submitted
+                - passport_status
+                - passport_filelink
+                - passport_identity_id
+                - passport_verification_id
+                - address_street_number
+                - address_locality
+                - address_route
+                - address_administrative_division
+                - address_postal_code
+                - address_status
+                - address_filelink
+                - address_identity_id
+                - address_verification_id
+            userFields:
+              title: List of user fields for return
+              description: Selected fields for return. ID field always return.
+              example: "[ \"id\", \"name_first\" ]"
+              type: array
+              items:
+                $ref: "#/components/schemas/userField"
+              minItems: 1
+            userAnd:
+              title: One of AND condition
+              description: One of AND condition for list of users
+              type: object
+              properties:
+                fld:
+                  description: Field for filter function
+                  $ref: "#/components/schemas/userField"
+                func:
+                  $ref: "#/components/schemas/func"
+                val:
+                  $ref: "#/components/schemas/val"
+                arr:
+                  $ref: "#/components/schemas/arr"
+              required: [ fld ]
+            userAnds:
+              title: List of AND conditions
+              description: List of AND conditions for list of users
+              type: array
+              items:
+                $ref: "#/components/schemas/userAnd"
+            userOrder:
+              title: One user field order
+              description: Sequence of orders by fields. If empty, order by id asc
+              example: "[ [ \"name_first\", \"asc\" ], [ \"name_last\", \"asc\" ] ]"
+              type: array
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/userField"
+                minItems: 1
+                maxItems: 2
+              maxItems: 4
+# === USER ELEMENTS
+# --- USER REQUESTS
+            reqUserAdd:
+              title: Creating new user
+              description: Request for creating new user
+              type: object
+              properties:
+                set:
+                  description: Fields with values of creating user
+                  $ref: "#/components/schemas/user"
+                get:
+                  $ref: "#/components/schemas/userFields"
+              required: [ set, get ]
+            reqUserRow:
+              title: Request user row
+              description: Request one user row
+              type: object
+              properties:
+                id:
+                  description: User ID
+                  type: string
+                get:
+                  $ref: "#/components/schemas/userFields"
+              required: [ id, get ]
+            reqUserUpd:
+              title: Request for update user
+              description: Request for update one user row
+              type: object
+              properties:
+                id:
+                  description: User ID
+                  type: string
+                set:
+                  $ref: "#/components/schemas/user"
+                get:
+                  $ref: "#/components/schemas/userFields"
+              required: [ id, set, get ]
+            reqUserTbl:
+              title: Request list of users
+              description: Request list of users with filtering, order, pagination
+              type: object
+              properties:
+                and:
+                  $ref: "#/components/schemas/userAnds"
+                get:
+                  $ref: "#/components/schemas/userFields"
+                order:
+                  description: Sequence of orders by fields. If empty, order by id asc
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/userOrder"
+                ofs:
+                  $ref: "#/components/schemas/ofs"
+                len:
+                  $ref: "#/components/schemas/len"
+              required: [ get ]
+# === USER REQUESTS
+# --- USER RESPONSES
+            resUserRow:
+              title: User
+              description: User fields
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  description: User data
+                  $ref: "#/components/schemas/user"
+              required: [ err, res ]
+            resUserTbl:
+              title: List of users
+              description: List of users by request filter
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    body:
+                      description: List of users
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/user"
+                  required: [ body ]
+              required: [ err, res ]
+# === USER RESPONSES
+# --- UTIL REQUESTS
+            reqConfirmEmail:
+              title: Request letter for confirm email
+              description: Request send letter with link/code for confirm user email
+              type: object
+              properties:
+                id:
+                  description: User ID
+                  type: string
+                email:
+                  description: User email
+                  type: string
+                  format: email
+              required: [ id, email ]
+            reqVerifyEmail:
+              title: Verify email by link/code
+              description: Verify email by link/code sended to email
+              type: object
+              properties:
+                id:
+                  description: User ID
+                  type: string
+                email:
+                  description: User email
+                  type: string
+                  format: email
+                code:
+                  description: Verify code
+                  type: string
+              required: [ id, email, code ]
+            reqConfirmPhone:
+              title: Request SMS for confirm phone
+              description: Request send SMS with link/code for confirm user phone
+              type: object
+              properties:
+                id:
+                  description: User ID
+                  type: string
+                phone:
+                  description: User phone
+                  type: string
+                  format: phone
+              required: [ id, phone ]
+            reqVerifyPhone:
+              title: Verify phone by link/code
+              description: Verify phone by link/code sended to phone
+              type: object
+              properties:
+                id:
+                  description: User ID
+                  type: string
+                phone:
+                  description: User phone
+                  type: string
+                  format: phone
+                code:
+                  description: Verify code
+                  type: string
+              required: [ id, phone, code ]
+            reqSearch:
+              title: Search in models request
+              description: Text search in models and return found rows
+              type: object
+              properties:
+                text:
+                  description: Text for search
+                  type: string
+                models:
+                  description: Models for search in
+                  type: object
+                  properties:
+                    user:
+                      description: Parameters for returned found user rows
+                      type: object
+                      properties:
+                        get:
+                          $ref: "#/components/schemas/userFields"
+                        ofs:
+                          $ref: "#/components/schemas/ofs"
+                        len:
+                          $ref: "#/components/schemas/len"
+                        search:
+                          description: Fields for search in (only with options for search)
+                          $ref: "#/components/schemas/userFields"
+                      required: [ get ]
+                    loan:
+                      description: Parameters for returned found loan rows
+                      type: object
+                      properties:
+                        get:
+                          $ref: "#/components/schemas/loanFields"
+                        ofs:
+                          $ref: "#/components/schemas/ofs"
+                        len:
+                          $ref: "#/components/schemas/len"
+                        search:
+                          description: Fields for search in (only with options for search)
+                          $ref: "#/components/schemas/loanFields"
+                      required: [ get ]
+                    loantrx:
+                      description: Parameters for returned found loan transaction rows
+                      type: object
+                      properties:
+                        get:
+                          $ref: "#/components/schemas/loantrxFields"
+                        ofs:
+                          $ref: "#/components/schemas/ofs"
+                        len:
+                          $ref: "#/components/schemas/len"
+                        search:
+                          description: Fields for search in (only with options for search)
+                          $ref: "#/components/schemas/loantrxFields"
+                      required: [ get ]
+                    loanitem:
+                      description: Parameters for returned found loan item rows
+                      type: object
+                      properties:
+                        get:
+                          $ref: "#/components/schemas/loanitemFields"
+                        ofs:
+                          $ref: "#/components/schemas/ofs"
+                        len:
+                          $ref: "#/components/schemas/len"
+                        search:
+                          description: Fields for search in (only with options for search)
+                          $ref: "#/components/schemas/loanitemFields"
+                      required: [ get ]
+                    loancitem:
+                      description: Parameters for returned found loan custom item rows
+                      type: object
+                      properties:
+                        get:
+                          $ref: "#/components/schemas/loancitemFields"
+                        ofs:
+                          $ref: "#/components/schemas/ofs"
+                        len:
+                          $ref: "#/components/schemas/len"
+                        search:
+                          description: Fields for search in (only with options for search)
+                          $ref: "#/components/schemas/loancitemFields"
+                      required: [ get ]
+              required: [ text, models ]
+            reqSqlTbl:
+              title: Request some rows by SQL
+              description: Request some rows by SQL from request direct from database
+              type: object
+              properties:
+                sql:
+                  description: SQL
+                  type: string
+              required: [ sql ]
+# === UTIL REQUESTS
+# --- UTIL RESPONSES
+            resSearch:
+              title: Result of search in models
+              description: List of rows for each models
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    text:
+                      description: Normalized text for search
+                      type: string
+                    models:
+                      description: List of requested models with found rows in it
+                      type: object
+                      properties:
+                        user:
+                          description: Found users
+                          type: object
+                          nullable: true
+                          properties:
+                            body:
+                              description: List of found users
+                              type: array
+                              items:
+                                $ref: "#/components/schemas/user"
+                          required: [ body ]
+                        loan:
+                          description: Found loans
+                          type: object
+                          nullable: true
+                          properties:
+                            body:
+                              description: List of found loans
+                              type: array
+                              items:
+                                $ref: "#/components/schemas/loan"
+                          required: [ body ]
+                        loantrx:
+                          description: Found loan transactions
+                          type: object
+                          nullable: true
+                          properties:
+                            body:
+                              description: List of found loan transactions
+                              type: array
+                              items:
+                                $ref: "#/components/schemas/loantrx"
+                          required: [ body ]
+                        loanitem:
+                          description: Found loan items
+                          type: object
+                          nullable: true
+                          properties:
+                            body:
+                              description: List of found loan items
+                              type: array
+                              items:
+                                $ref: "#/components/schemas/loanitem"
+                          required: [ body ]
+                        loancitem:
+                          description: Found loan custom items
+                          type: object
+                          nullable: true
+                          properties:
+                            body:
+                              description: List of found loan custom items
+                              type: array
+                              items:
+                                $ref: "#/components/schemas/loancitem"
+                          required: [ body ]
+                  required: [ text, models ]
+              required: [ err, res ]
+            resSqlTbl:
+              title: Result of SQL tbl request
+              description: List of rows
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    body:
+                      description: List of rows
+                      type: array
+                      items:
+                        type: object
+                        additionalProperties: true
+                  required: [ body ]
+              required: [ err, res ]
+# === UTIL RESPONSES
+# --- PAYMETH ELEMENTS
+            paymeth:
+              title: User payment method object
+              description: Returned user payment method object
+              type: object
+              properties:
+                id:
+                  description: Payment method ID
+                  type: string
+                user_id:
+                  description: User owner of payment method
+                  type: string
+                primary:
+                  description: Flag of primary payment method (readonly)
+                  type: boolean
+                  nullable: true
+                sid:
+                  description: ID of payment method at provider
+                  type: string
+                  nullable: true
+                added_dt:
+                  description: Datetime when user payment method added
+                  type: string
+                  format: datetime
+                  nullable: true
+                type:
+                  description: "Type of payment method: visa, mastercard, ..."
+                  type: string
+                  nullable: true
+                digits:
+                  description: Last 4 digits of card number
+                  type: string
+                  nullable: true
+                expire_year:
+                  description: Year of card expire
+                  type: integer
+                  nullable: true
+                expire_month:
+                  description: Month of card expire
+                  type: integer
+                  nullable: true
+                expiration:
+                  description: Month/Year of card expiration
+                  type: string
+                  nullable: true
+                country_code:
+                  description: Card country code ISO 3166-1 Alpha-2
+                  type: string
+                  nullable: true
+                funding:
+                  description: Funding of card
+                  type: string
+                  nullable: true
+                  enum:
+                    - credit
+                    - debit
+                    - prepaid
+                    - unknown
+                support3dsecure:
+                  description: Is card support 3D secure
+                  type: boolean
+                  nullable: true
+                name:
+                  description: Cardholder name
+                  type: string
+                  nullable: true
+                fingerprint:
+                  description: Uniquely identifies this particular card number
+                  type: string
+                  nullable: true
+                primary_sid:
+                  description: ID of primary payment method at provider (readonly)
+                  type: string
+                  nullable: true
+              required: [ id ]
+            paymethField:
+              title: One user payment method field
+              description: One user payment method field for return
+              type: string
+              enum:
+                - id
+                - user_id
+                - primary
+                - sid
+                - added_dt
+                - type
+                - digits
+                - expire_year
+                - expire_month
+                - expiration
+                - country_code
+                - funding
+                - support3dsecure
+                - name
+                - fingerprint
+                - primary_sid
+            paymethFields:
+              title: List of user payment method fields for return
+              description: Selected fields for return. ID field always return.
+              example: "[ \"id\", \"type\" ]"
+              type: array
+              items:
+                $ref: "#/components/schemas/paymethField"
+              minItems: 1
+            paymethAnd:
+              title: One of AND condition
+              description: One of AND condition for list of user payment methods
+              type: object
+              properties:
+                fld:
+                  description: Field for filter function
+                  $ref: "#/components/schemas/paymethField"
+                func:
+                  $ref: "#/components/schemas/func"
+                val:
+                  $ref: "#/components/schemas/val"
+                arr:
+                  $ref: "#/components/schemas/arr"
+              required: [ fld ]
+            paymethAnds:
+              title: List of AND conditions
+              description: List of AND conditions for list of users
+              type: array
+              items:
+                $ref: "#/components/schemas/paymethAnd"
+            paymethOrder:
+              title: One user payment method field order
+              description: Sequence of orders by fields. If empty, order by id asc
+              example: "[ [ \"added_dt\", \"asc\" ], [ \"type\", \"asc\" ] ]"
+              type: array
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/paymethField"
+                minItems: 1
+                maxItems: 2
+              maxItems: 4
+# === PAYMETH ELEMENTS
+# --- PAYMETH REQUESTS
+            reqPaymethRow:
+              title: Request user paymenth method row
+              description: Request one user payment method row
+              type: object
+              properties:
+                id:
+                  description: User payment method ID
+                  type: string
+                get:
+                  $ref: "#/components/schemas/paymethFields"
+              required: [ id, get ]
+            reqPaymethTbl:
+              title: Request list of user payment methods
+              description: Request list of user payment methods with filtering, order, pagination
+              type: object
+              properties:
+                and:
+                  $ref: "#/components/schemas/paymethAnds"
+                get:
+                  $ref: "#/components/schemas/paymethFields"
+                order:
+                  description: Sequence of orders by fields. If empty, order by id asc
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/paymethOrder"
+                ofs:
+                  $ref: "#/components/schemas/ofs"
+                len:
+                  $ref: "#/components/schemas/len"
+              required: [ get ]
+# === PAYMETH REQUESTS
+# --- PAYMETH RESPONSES
+            resPaymethRow:
+              title: User payment method
+              description: User payment method fields
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  description: User payment method object
+                  $ref: "#/components/schemas/paymeth"
+              required: [ err, res ]
+            resPaymethTbl:
+              title: List of user payment methods
+              description: List of user paymenth methods by request filter
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    body:
+                      description: List of user payment methods
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/paymeth"
+                  required: [ body ]
+              required: [ err, res ]
+# === PAYMETH RESPONSES
+# --- LOAN ELEMENTS
+            loan:
+              title: User loan object
+              description: Returned user loan object
+              type: object
+              properties:
+                id:
+                  description: Loan ID
+                  type: string
+                sid:
+                  description: String ID of user loan (Order ID)
+                  type: string
+                user_id:
+                  description: User ID
+                  type: string
+                created_dt:
+                  description: Datetime of create loan
+                  type: string
+                  format: datetime
+                total:
+                  description: Total amount of loan
+                  type: number
+                overdue:
+                  description: Flag of overdue loan
+                  type: boolean
+                  nullable: true
+                pc_reference:
+                  description: Purchase reference of loan - short string code for ident loan for support
+                  type: string
+                  nullable: true
+                pp_reference:
+                  description: PollenPay reference - Order ID converted to base64 string for support
+                  type: string
+                  nullable: true
+                outstanding:
+                  description: Flag of outstanding loan
+                  type: boolean
+                  nullable: true
+                completed:
+                  description: Flag of completed loan
+                  type: boolean
+                  nullable: true
+                outstanding_amount:
+                  description: Outstanding amount will be paid by user
+                  type: number
+                merchant_sid:
+                  description: Merchant SID (String ID)
+                  type: string
+                  nullable: true
+                merchant_name:
+                  description: Name of merchant (readonly)
+                  type: string
+                  nullable: true
+                merchant_link:
+                  description: Link to merchant site (readonly)
+                  type: string
+                  nullable: true
+                paymeth_sid:
+                  description: User payment method SID (String ID)
+                  type: string
+                  nullable: true
+                paymeth_type:
+                  description: User payment method type
+                  type: string
+                  nullable: true
+                paymeth_digits:
+                  description: User payment method digits
+                  type: string
+                  nullable: true
+                next_payment_dt:
+                  description: Next scheduled payment datetime
+                  type: string
+                  format: datetime
+                  nullable: true
+                next_payment_amount:
+                  description: Next scheduled payment amount
+                  type: number
+                  nullable: true
+                last_payment_dt:
+                  description: Last paid payment datetime
+                  type: string
+                  format: datetime
+                  nullable: true
+                last_payment_amount:
+                  description: Last paid payment amount
+                  type: number
+                  nullable: true
+                first_payment_dt:
+                  description: First (scheduled or paid) payment datetime
+                  type: string
+                  format: datetime
+                  nullable: true
+                first_payment_amount:
+                  description: First (scheduled or paid) payment amount
+                  type: number
+                  nullable: true
+                first_payment_status:
+                  description: First payment status
+                  type: string
+                  enum:
+                    - scheduled
+                    - paid
+                  nullable: true
+              required: [ id ]
+            loanField:
+              title: One user loan field
+              description: One user loan field for return
+              type: string
+              enum:
+                - id
+                - sid
+                - user_id
+                - created_dt
+                - total
+                - overdue
+                - pc_reference
+                - pp_reference
+                - outstanding
+                - completed
+                - outstanding_amount
+                - merchant_sid
+                - merchant_name
+                - merchant_link
+                - paymeth_sid
+                - paymeth_type
+                - paymeth_digits
+                - next_payment_dt
+                - next_payment_amount
+                - last_payment_dt
+                - last_payment_amount
+                - first_payment_dt
+                - first_payment_amount
+                - first_payment_status
+            loanFields:
+              title: List of user loan fields for return
+              description: Selected fields for return. ID field always return.
+              example: "[ \"id\", \"sid\" ]"
+              type: array
+              items:
+                $ref: "#/components/schemas/loanField"
+              minItems: 1
+            loanAnd:
+              title: One of AND condition
+              description: One of AND condition for list of user loans
+              type: object
+              properties:
+                fld:
+                  description: Field for filter function
+                  $ref: "#/components/schemas/loanField"
+                func:
+                  $ref: "#/components/schemas/func"
+                val:
+                  $ref: "#/components/schemas/val"
+                arr:
+                  $ref: "#/components/schemas/arr"
+              required: [ fld ]
+            loanAnds:
+              title: List of AND conditions
+              description: List of AND conditions for list of users
+              type: array
+              items:
+                $ref: "#/components/schemas/loanAnd"
+            loanOrder:
+              title: One user loan field order
+              description: Sequence of orders by fields. If empty, order by id asc
+              example: "[ [ \"created_dt\", \"asc\" ], [ \"total\", \"desc\" ] ]"
+              type: array
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/loanField"
+                minItems: 1
+                maxItems: 2
+              maxItems: 4
+# === LOAN ELEMENTS
+# --- LOAN REQUESTS
+            reqLoanRow:
+              title: Request user loan row
+              description: Request one user loan row
+              type: object
+              properties:
+                id:
+                  description: User loan ID
+                  type: string
+                get:
+                  $ref: "#/components/schemas/loanFields"
+              required: [ id, get ]
+            reqLoanTbl:
+              title: Request list of user loans
+              description: Request list of user loans with filtering, order, pagination
+              type: object
+              properties:
+                and:
+                  $ref: "#/components/schemas/loanAnds"
+                get:
+                  $ref: "#/components/schemas/loanFields"
+                order:
+                  description: Sequence of orders by fields. If empty, order by id asc
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/loanOrder"
+                ofs:
+                  $ref: "#/components/schemas/ofs"
+                len:
+                  $ref: "#/components/schemas/len"
+              required: [ get ]
+            reqLoanAdj:
+              title: Request adjust user loan transactions
+              description: Request adjust user loan transactions
+              type: object
+              properties:
+                id:
+                  description: User loan ID
+                  type: string
+                apply:
+                  description:  >-
+                    Flag for apply changes for real ajust (else dry-run adjust):
+                    0 - dry run,
+                    1 - reschedule (amount not changed),
+                    2 - change (increase/decrease, but amount must be > 0),
+                    3 - force mode, any changes of amount
+                  type: integer
+                  default: 0
+                  nullable: true
+                period:
+                  description:  >-
+                    Period of scheduled payments, if not custom, then dt in adjtrx ignored.
+                  type: string
+                  enum:
+                    - fortnightly
+                    - monthly
+                    - custom
+                  nullable: true
+                outstanding_amount:
+                  description: Sum of scheduled payments
+                  type: number
+                  nullable: true
+                adjtrx:
+                  type: array
+                  nullable: true
+                  items:
+                    description: Adjusted user loan transactions
+                    type: object
+                    properties:
+                      sid:
+                        description: User loan transaction String ID
+                        type: string
+                      dt:
+                        description: Datetime of loan transaction
+                        type: string
+                        format: datetime
+                      amount:
+                        description: Amount of loan transaction
+                        type: number
+                    required: [ sid ]
+              required: [ id ]
+# === LOAN REQUESTS
+# --- LOAN RESPONSES
+            resLoanRow:
+              title: User loan
+              description: User loan fields
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  description: User loan object
+                  $ref: "#/components/schemas/loan"
+              required: [ err, res ]
+            resLoanTbl:
+              title: List of user loans
+              description: List of user loans by request filter
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    body:
+                      description: List of user loans
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/loan"
+                  required: [ body ]
+              required: [ err, res ]
+# === LOAN RESPONSES
+# --- LOANTRX ELEMENTS
+            loantrx:
+              title: User loan transaction object
+              description: Returned user loan transaction object
+              type: object
+              properties:
+                id:
+                  description: Loan transaction ID (Loan ID * 1000 + Index of transaction row)
+                  type: string
+                sid:
+                  description: User loan transaction String ID
+                  type: string
+                loan_id:
+                  description: User loan ID
+                  type: string
+                loan_sid:
+                  description: User loan String ID
+                  type: string
+                user_id:
+                  description: User ID
+                  type: string
+                dt:
+                  description: Datetime of loan transaction
+                  type: string
+                  format: datetime
+                  nullable: true
+                amount:
+                  description: Amount of loan transaction
+                  type: number
+                status:
+                  description: Status of loan transaction
+                  type: string
+                  nullable: true
+                paid:
+                  description: Flag of paid loan transaction
+                  type: boolean
+                  nullable: true
+                scheduled:
+                  description: Flag of scheduled loan transaction
+                  type: boolean
+                  nullable: true
+                payment_sid:
+                  description: Stripe payment String ID
+                  type: string
+                  nullable: true
+              required: [ id ]
+            loantrxField:
+              title: One user loan transaction field
+              description: One user loan transaction field for return
+              type: string
+              enum:
+                - id
+                - sid
+                - loan_id
+                - loan_sid
+                - user_id
+                - dt
+                - amount
+                - status
+                - paid
+                - scheduled
+                - payment_sid
+            loantrxFields:
+              title: List of user loan transaction fields for return
+              description: Selected fields for return. ID field always return.
+              example: "[ \"id\", \"sid\" ]"
+              type: array
+              items:
+                $ref: "#/components/schemas/loantrxField"
+              minItems: 1
+            loantrxAnd:
+              title: One of AND condition
+              description: One of AND condition for list of user loan transactions
+              type: object
+              properties:
+                fld:
+                  description: Field for filter function
+                  $ref: "#/components/schemas/loantrxField"
+                func:
+                  $ref: "#/components/schemas/func"
+                val:
+                  $ref: "#/components/schemas/val"
+                arr:
+                  $ref: "#/components/schemas/arr"
+              required: [ fld ]
+            loantrxAnds:
+              title: List of AND conditions
+              description: List of AND conditions for list of user loan transactions
+              type: array
+              items:
+                $ref: "#/components/schemas/loantrxAnd"
+            loantrxOrder:
+              title: One user loan transaction field order
+              description: Sequence of orders by fields. If empty, order by id asc
+              example: "[ [ \"id\", \"asc\" ] ]"
+              type: array
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/loantrxField"
+                minItems: 1
+                maxItems: 2
+              maxItems: 4
+# === LOANTRX ELEMENTS
+# --- LOANTRX REQUESTS
+            reqLoanTrxRow:
+              title: Request user loan transaction row
+              description: Request one user loan transaction row
+              type: object
+              properties:
+                id:
+                  description: User loan transaction ID
+                  type: string
+                get:
+                  $ref: "#/components/schemas/loantrxFields"
+              required: [ id, get ]
+            reqLoanTrxTbl:
+              title: Request list of user loan transactions
+              description: Request list of user loan transactions with filtering, order, pagination
+              type: object
+              properties:
+                and:
+                  $ref: "#/components/schemas/loantrxAnds"
+                get:
+                  $ref: "#/components/schemas/loantrxFields"
+                order:
+                  description: Sequence of orders by fields. If empty, order by id asc
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/loantrxOrder"
+                ofs:
+                  $ref: "#/components/schemas/ofs"
+                len:
+                  $ref: "#/components/schemas/len"
+              required: [ get ]
+# === LOANTRX REQUESTS
+# --- LOANTRX RESPONSES
+            resLoanTrxRow:
+              title: User loan transaction
+              description: User loan transaction fields
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  description: User loan transaction object
+                  $ref: "#/components/schemas/loantrx"
+              required: [ err, res ]
+            resLoanTrxTbl:
+              title: List of user loan transactions
+              description: List of user loan transactions by request filter
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    body:
+                      description: List of user loan transactions
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/loantrx"
+                  required: [ body ]
+              required: [ err, res ]
+# === LOANTRX RESPONSES
+# --- LOANITEM ELEMENTS
+            loanitem:
+              title: User loan item object
+              description: Returned user loan item object
+              type: object
+              properties:
+                id:
+                  description: Loan item ID (Loan ID * 1000 + Index of item row)
+                  type: string
+                loan_id:
+                  description: User loan ID
+                  type: string
+                loan_sid:
+                  description: User loan String ID
+                  type: string
+                product_sid:
+                  description: Merchant product String ID
+                  type: string
+                product_name:
+                  description: Merchant product name
+                  type: string
+                  nullable: true
+                product_quantity:
+                  description: Merchant product quantity (always 1)
+                  type: integer
+                  nullable: true
+                product_image_url:
+                  description: Merchant product image URL
+                  type: string
+                  nullable: true
+                product_price_total:
+                  description: Total price of merchant product
+                  type: number
+                product_price_wotax:
+                  description: Price without tax of merchant product
+                  type: number
+                  nullable: true
+                product_tax_percent:
+                  description: Tax percent of merchant product
+                  type: number
+                  nullable: true
+              required: [ id ]
+            loanitemField:
+              title: One user loan item field
+              description: One user loan item field for return
+              type: string
+              enum:
+                - id
+                - loan_id
+                - loan_sid
+                - product_sid
+                - product_name
+                - product_quantity
+                - product_image_url
+                - product_price_total
+                - product_price_wotax
+                - product_tax_percent
+            loanitemFields:
+              title: List of user loan item fields for return
+              description: Selected fields for return. ID field always return.
+              example: "[ \"id\" ]"
+              type: array
+              items:
+                $ref: "#/components/schemas/loanitemField"
+              minItems: 1
+            loanitemAnd:
+              title: One of AND condition
+              description: One of AND condition for list of user loan items
+              type: object
+              properties:
+                fld:
+                  description: Field for filter function
+                  $ref: "#/components/schemas/loanitemField"
+                func:
+                  $ref: "#/components/schemas/func"
+                val:
+                  $ref: "#/components/schemas/val"
+                arr:
+                  $ref: "#/components/schemas/arr"
+              required: [ fld ]
+            loanitemAnds:
+              title: List of AND conditions
+              description: List of AND conditions for list of user loan items
+              type: array
+              items:
+                $ref: "#/components/schemas/loanitemAnd"
+            loanitemOrder:
+              title: One user loan item field order
+              description: Sequence of orders by fields. If empty, order by id asc
+              example: "[ [ \"id\", \"asc\" ] ]"
+              type: array
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/loanitemField"
+                minItems: 1
+                maxItems: 2
+              maxItems: 4
+# === LOANITEM ELEMENTS
+# --- LOANITEM REQUESTS
+            reqLoanItemRow:
+              title: Request user loan item row
+              description: Request one user loan item row
+              type: object
+              properties:
+                id:
+                  description: User loan item ID
+                  type: string
+                get:
+                  $ref: "#/components/schemas/loanitemFields"
+              required: [ id, get ]
+            reqLoanItemTbl:
+              title: Request list of user loan items
+              description: Request list of user loan items with filtering, order, pagination
+              type: object
+              properties:
+                and:
+                  $ref: "#/components/schemas/loanitemAnds"
+                get:
+                  $ref: "#/components/schemas/loanitemFields"
+                order:
+                  description: Sequence of orders by fields. If empty, order by id asc
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/loanitemOrder"
+                ofs:
+                  $ref: "#/components/schemas/ofs"
+                len:
+                  $ref: "#/components/schemas/len"
+              required: [ get ]
+# === LOANITEM REQUESTS
+# --- LOANITEM RESPONSES
+            resLoanItemRow:
+              title: User loan item
+              description: User loan item fields
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  description: User loan item object
+                  $ref: "#/components/schemas/loanitem"
+              required: [ err, res ]
+            resLoanItemTbl:
+              title: List of user loan items
+              description: List of user loan items by request filter
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    body:
+                      description: List of user loan items
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/loanitem"
+                  required: [ body ]
+              required: [ err, res ]
+# === LOANITEM RESPONSES
+# --- LOANCITEM ELEMENTS
+            loancitem:
+              title: User loan custom item object
+              description: Returned user loan custom item object
+              type: object
+              properties:
+                id:
+                  description: Loan item ID (Loan ID * 1500 + Index of item row)
+                  type: string
+                loan_id:
+                  description: User loan ID
+                  type: string
+                loan_sid:
+                  description: User loan String ID
+                  type: string
+                product_sid:
+                  description: Merchant product String ID (always null in current version)
+                  type: string
+                product_name:
+                  description: Merchant product name
+                  type: string
+                  nullable: true
+                product_quantity:
+                  description: Merchant product quantity
+                  type: integer
+                  nullable: true
+                product_image_url:
+                  description: Merchant product image URL
+                  type: string
+                  nullable: true
+                product_price_total:
+                  description: Total price of merchant product
+                  type: number
+                product_price_wotax:
+                  description: Price without tax of merchant product (always null in current version)
+                  type: number
+                  nullable: true
+                product_tax_percent:
+                  description: Tax percent of merchant product (always null in current version)
+                  type: number
+                  nullable: true
+              required: [ id ]
+            loancitemField:
+              title: One user loan custom item field
+              description: One user loan custom item field for return
+              type: string
+              enum:
+                - id
+                - loan_id
+                - loan_sid
+                - product_sid
+                - product_name
+                - product_quantity
+                - product_image_url
+                - product_price_total
+                - product_price_wotax
+                - product_tax_percent
+            loancitemFields:
+              title: List of user loan custom item fields for return
+              description: Selected fields for return. ID field always return.
+              example: "[ \"id\" ]"
+              type: array
+              items:
+                $ref: "#/components/schemas/loancitemField"
+              minItems: 1
+            loancitemAnd:
+              title: One of AND condition
+              description: One of AND condition for list of user loan custom items
+              type: object
+              properties:
+                fld:
+                  description: Field for filter function
+                  $ref: "#/components/schemas/loancitemField"
+                func:
+                  $ref: "#/components/schemas/func"
+                val:
+                  $ref: "#/components/schemas/val"
+                arr:
+                  $ref: "#/components/schemas/arr"
+              required: [ fld ]
+            loancitemAnds:
+              title: List of AND conditions
+              description: List of AND conditions for list of user loan custom items
+              type: array
+              items:
+                $ref: "#/components/schemas/loancitemAnd"
+            loancitemOrder:
+              title: One user loan custom item field order
+              description: Sequence of orders by fields. If empty, order by id asc
+              example: "[ [ \"id\", \"asc\" ] ]"
+              type: array
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/loancitemField"
+                minItems: 1
+                maxItems: 2
+              maxItems: 4
+# === LOANCITEM ELEMENTS
+# --- LOANCITEM REQUESTS
+            reqLoanCItemRow:
+              title: Request user loan custom item row
+              description: Request one user loan custom item row
+              type: object
+              properties:
+                id:
+                  description: User loan item ID
+                  type: string
+                get:
+                  $ref: "#/components/schemas/loancitemFields"
+              required: [ id, get ]
+            reqLoanCItemTbl:
+              title: Request list of user loan custom items
+              description: Request list of user loan custom items with filtering, order, pagination
+              type: object
+              properties:
+                and:
+                  $ref: "#/components/schemas/loancitemAnds"
+                get:
+                  $ref: "#/components/schemas/loancitemFields"
+                order:
+                  description: Sequence of orders by fields. If empty, order by id asc
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/loancitemOrder"
+                ofs:
+                  $ref: "#/components/schemas/ofs"
+                len:
+                  $ref: "#/components/schemas/len"
+              required: [ get ]
+# === LOANCITEM REQUESTS
+# --- LOANCITEM RESPONSES
+            resLoanCItemRow:
+              title: User loan custom item
+              description: User loan custom item fields
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  description: User loan custom item object
+                  $ref: "#/components/schemas/loancitem"
+              required: [ err, res ]
+            resLoanCItemTbl:
+              title: List of user loan custom items
+              description: List of user loan custom items by request filter
+              properties:
+                err:
+                  description: False for success response
+                  type: boolean
+                  default: false
+                res:
+                  type: object
+                  properties:
+                    body:
+                      description: List of user loan custom items
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/loancitem"
+                  required: [ body ]
+              required: [ err, res ]
+# === LOANCITEM RESPONSES
+          responses:
+            successEmpty:
+              description: Empty response
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resSuccessEmpty"
+            error:
+              description: Invalid payload or Server error
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resError"
+            userRow:
+              description: User
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resUserRow"
+            userTbl:
+              description: List of users
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resUserTbl"
+            paymethRow:
+              description: User payment method
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resPaymethRow"
+            paymethTbl:
+              description: List of user payment methods
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resPaymethTbl"
+            loanRow:
+              description: User loan
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanRow"
+            loanTbl:
+              description: List of user loans
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanTbl"
+            loantrxRow:
+              description: User loan transaction
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanTrxRow"
+            loantrxTbl:
+              description: List of user loan transactions
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanTrxTbl"
+            loanitemRow:
+              description: User loan item
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanItemRow"
+            loanitemTbl:
+              description: List of user loan items
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanItemTbl"
+            loancitemRow:
+              description: User loan custom item
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanCItemRow"
+            loancitemTbl:
+              description: List of user loan custom items
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resLoanCItemTbl"
+            search:
+              description: Result of search in models
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resSearch"
+            sqlTbl:
+              description: Result of execute SQL
+              content:
+                application/json:
+                  schema:
+                    $ref: "#/components/schemas/resSqlTbl"
+          securitySchemes:
+            AuthAdmin:
+              type: "apiKey"
+              name: "Unused"
+              in: "header"
+              x-amazon-apigateway-authtype: "custom"
+              x-amazon-apigateway-authorizer:
+                authorizerUri: !Sub "arn:aws:apigateway:eu-west-2:lambda:path/2015-03-31/functions/${PPAdminAuth.Arn}/invocations"
+                authorizerCredentials: !Sub arn:aws:iam::${AWS::AccountId}:role/LambdaUAT
+                authorizerResultTtlInSeconds: 60
+                identitySource: "method.request.header.AccessToken, method.request.header.User"
+                type: "request"
+        x-amazon-apigateway-gateway-responses:
+          INVALID_SIGNATURE:
+            statusCode: 403
+            responseTemplates:
+              application/json: "{\"err\": true, \"rej\": {\"message\": $context.error.messageString, \"code\": 403 }}"
+          EXPIRED_TOKEN:
+            statusCode: 403
+            responseTemplates:
+              application/json: "{\"err\": true, \"rej\": {\"message\": $context.error.messageString, \"code\": 403 }}"
+          INVALID_API_KEY:
+            statusCode: 403
+            responseTemplates:
+              application/json: "{\"err\": true, \"rej\": {\"message\": $context.error.messageString, \"code\": 403 }}"
+          UNAUTHORIZED:
+            statusCode: 401
+            responseTemplates:
+              application/json: "{\"err\": true, \"rej\": {\"message\": $context.error.messageString, \"code\": 401 }}"
+          MISSING_AUTHENTICATION_TOKEN:
+            statusCode: 401
+            responseTemplates:
+              application/json: "{\"err\": true, \"rej\": {\"message\": $context.error.messageString, \"code\": 401 }}"
+          DEFAULT_4XX:
+            responseTemplates:
+              application/json: "{\"err\": true, \"rej\": {\"message\": $context.error.messageString, \"code\": 400 }}"
+          DEFAULT_5XX:
+            responseTemplates:
+              application/json: "{\"err\": true, \"rej\": {\"message\": $context.error.messageString, \"code\": 500 }}"

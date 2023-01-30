@@ -1,0 +1,113 @@
+####################################################################################################
+#
+# This is a shared shell library for various tools that provide subcommands.
+#
+# Include it early like:
+#   . "$(dirname "${BASH_SOURCE[0]}")"/_shlib -- "
+#       This tool does things.
+#       There's some more info here.
+#   "
+# Alternatively the description may be specified using _toolinfo_usage (either func or plain var).
+#
+# Then define available commands. To add cmd $NAME and make it appear with "help" subcommand,
+# define shell function "_cmdcode_$NAME" and optionally "_cmdinfo_$NAME" to provide
+# a short description; "_cmdinfo_$NAME" may be a function or a plain string value.
+# Also, "-" in $NAME is equiv to "_".
+# Like for "mycommand" to be available:
+#   _cmdinfo_mycommand="do something for me"
+#   _cmdcode_mycommand() {
+#       echo "something to be done"
+#   }
+#
+# Finally, call router func:
+#   _toolmain "$@"
+#
+####################################################################################################
+
+[[ -v TOOL_EXEC ]] || TOOL_EXEC="${BASH_SOURCE[-1]}"
+
+[ ! -t 0 ]; TTYI=$?         # stdin is a tty?
+[ ! -t 1 ]; TTYO=$?         # stdout is a tty?
+
+_err() {
+    >&2 printf "ERROR: "
+    >&2 printf "$@"
+    >&2 printf "\n"
+}
+
+_die() {
+    _err "$@"
+    exit 1
+}
+
+# printf for each line of input
+_util_linefmt() {
+    xargs -d\\n -n1 printf "$*\n"
+}
+
+_heredoc() {
+    while IFS= read -rs LINE && [[ "$LINE" =~ ^([\ ]*)(.*)$ ]] && [[ "" == "${BASH_REMATCH[2]}" ]]; do :; done
+    local PREFIX=${BASH_REMATCH[1]}
+    printf '%s\n' "${BASH_REMATCH[2]}"
+    while IFS= read -rs LINE; do printf '%s\n' "${LINE/$PREFIX/}"; done
+}
+
+_strfn() {
+    if [[ function == $(type -t "$1") ]]
+    then STR=$("$1")
+    else STR=${!1-$2}
+    fi
+    printf '%s\n' "$STR"
+}
+
+if [[ "--" == "$1" ]]; then
+    _toolinfo_usage=$(_heredoc <<< "$2")
+    shift 2
+fi
+
+# output a brief list of available cmds and their info
+_toolinfo_cmds() {
+    (
+        # enumerate available (sub)commands by looking up defined shell functions
+        shopt -s extdebug                                                   # output line numbers for func definitions with compgen
+        declare -F $(compgen -A function | sed -nre '/^_cmdcode_/p') |      # list _cmdcode_* functions
+        sort -nk 2 |                                                        # sort by appearance
+        sed -nre 's/^(_cmdcode_([^ ]*)).*$/\2 \1 _cmdinfo_\2/p'             # produce table: CMD CMD_CODE_FN CMD_INFO_FN
+    ) |
+    while read -rs CMD CMD_CODE_FN CMD_INFO_FN dummy; do
+        if [[ function == $(type -t "$CMD_INFO_FN") ]]
+        then CMD_INFO=$("$CMD_INFO_FN")
+        else CMD_INFO=${!CMD_INFO_FN-${CMD_CODE_FN}}
+        fi
+        printf '%s\t%s\n' "${CMD//_/-}" "$CMD_INFO"
+    done
+}
+
+_cmdinfo_help="this help"
+_cmdcode_help() {
+    {
+        printf '\n%q ...\n' "$TOOL_EXEC"
+        _strfn _toolinfo_usage '(no info available)'
+        echo
+        _toolinfo_cmds
+        echo
+    } |
+    _util_linefmt '# %s'
+}
+
+_toolmain() {
+    if (( $# < 1 )); then
+        _err "no command provided, defaulting to \`%q help\`" "$TOOL_EXEC"
+        >&2 _cmdcode_help
+        exit 1
+    fi
+
+    CMD=${1//-/_}
+    CMD_CODE_FN=_cmdcode_$CMD
+    shift
+
+    [[ function != $(type -t "$CMD_CODE_FN") ]] &&
+        _die "unknown command: $CMD, try \`%q help\`" "$TOOL_EXEC"
+
+    "$CMD_CODE_FN" "$@"
+}

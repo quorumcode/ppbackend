@@ -1,0 +1,63 @@
+#!/bin/bash
+
+REMOTE_BUCKET=client-assets-pp03uat
+LOCAL_WORK_DIR=work/${REMOTE_BUCKET}
+LOCAL_TEMP_DIR=work/${REMOTE_BUCKET}-temp
+
+. "$(dirname "${BASH_SOURCE[0]}")"/_shlib -- "
+    Maintain ${REMOTE_BUCKET}.
+    Use AWS_PROFILE and other AWS_* env vars to tune AWS cli.
+"
+
+####################################################################################################
+
+_cmdinfo_pull="pull from s3"
+_cmdcode_pull() (
+    (set -x; aws s3 sync "s3://${REMOTE_BUCKET}/" "${LOCAL_WORK_DIR}/")
+)
+
+_cmdinfo_push="push to s3, making new objects public"
+_cmdcode_push() (
+    >&2 echo "r u sure know what you are doing? comment this line and remove --dryrun for this to work."; exit 1
+    (set -x; aws s3 sync "${LOCAL_WORK_DIR}/" "s3://${REMOTE_BUCKET}/" --acl public-read --dryrun)
+)
+
+_cmdinfo_diff="diff local..remote (always first fetches to temp dir)"
+_cmdcode_diff() (
+    (set -x; aws s3 sync --delete "s3://${REMOTE_BUCKET}/" "${LOCAL_TEMP_DIR}/")
+    colordiff -ru "${LOCAL_WORK_DIR}/" "${LOCAL_TEMP_DIR}/"
+)
+
+_cmdinfo_fsck="inspect files mentioned in db, but missing in s3 (always first fetches to temp dir)"
+_cmdcode_fsck() (
+    (set -x; aws s3 sync --delete "s3://${REMOTE_BUCKET}/" "${LOCAL_TEMP_DIR}/")
+
+    SQL=$(_heredoc <<< '
+        WITH
+            file as (
+                select distinct logo_fn as fn from merchant
+                union
+                select distinct image_fn as fn from merchant
+            )
+        SELECT file.fn FROM file WHERE file.fn IS NOT NULL
+    ')
+
+    mapfile -t DB_CONTENT < <(NOBANNER=1 INST=prod tool/db --raw -N -e "$SQL" | sort)
+    mapfile -t S3_CONTENT < <(find "${LOCAL_WORK_DIR}/" -type f -printf '%P\n' | sort)
+
+    mapfile -t DIFF_DB_S3 < <(comm -23 <(printf "%s\n" "${DB_CONTENT[@]}") <(printf "%s\n" "${S3_CONTENT[@]}"))
+    #mapfile -t DIFF_S3_DB < <(comm -13 <(printf "%s\n" "${DB_CONTENT[@]}") <(printf "%s\n" "${S3_CONTENT[@]}"))
+
+    if ((${#DIFF_DB_S3[@]})); then
+        >&2 echo "=== In DB, but not found in S3 bucket:"
+        printf '%s\n' "${DIFF_DB_S3[@]}"
+        >&2 echo
+    fi
+    if ((${#DIFF_S3_DB[@]})); then
+        >&2 echo "=== In S3, but not found in DB:"
+        printf '%s\n' "${DIFF_S3_DB[@]}"
+        >&2 echo
+    fi
+)
+
+_toolmain "$@"

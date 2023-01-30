@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# ... up
+# ... down
+# ... logs -f
+# ... config
+# ... etc
+
+# by default (w/o args) do following:
+[[ 0 = "$#" ]] && set -- up --build --remove-orphans # --detach
+
+PROJECT_NAME=pollen
+PROJECT_BASE=$(cd "$(dirname "$BASH_SOURCE")/.."; pwd)
+PROJECT_FILE="$(dirname "$BASH_SOURCE")/docker-compose.yml"
+
+CMD=(
+    env --ignore-environment --chdir="$PROJECT_BASE"
+    PWD="$PROJECT_BASE"
+    COMPOSE_HTTP_TIMEOUT=300
+    COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+    USER_NAME="$(id -un)"
+    USER_IDMAP=$(id -u):$(id -g)
+    USER_HOME="$(getent passwd $(id -un) | cut -d: -f6)"
+    API_LOCAL_REGION=eu-west-2
+    docker-compose
+    --project-directory="$PROJECT_BASE"
+    --file="$PROJECT_FILE"
+    "$@"
+)
+set -ex
+"${CMD[@]}"

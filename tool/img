@@ -1,0 +1,30 @@
+#!/bin/bash
+
+. "$(dirname "${BASH_SOURCE[0]}")"/_shlib -- "
+    Various image tools
+"
+
+####################################################################################################
+
+_cmdinfo_mklogo="{ SRC [DST] } make logo png from svg"
+_cmdcode_mklogo() (
+    SRC=$1
+    TMP=${SRC%.*}.tmp.png
+    case $# in
+        1 ) DST=${SRC%.*}.png ;;
+        2 ) DST=$2 ;;
+        * ) _die "Either 1 or 2 args required" ;;
+    esac
+
+    set -e
+    (
+        set -x
+        inkscape --without-gui "$SRC" --export-png="$TMP" --export-width=512 --export-height=512 --export-background-opacity=0
+        convert -background none -size 512x512 -channel RGB -negate "$TMP" "$DST"
+        optipng "$DST"
+    )
+    rm "$TMP"
+    ls -al "$DST"
+)
+
+_toolmain "$@"

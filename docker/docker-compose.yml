@@ -1,0 +1,65 @@
+###
+### see docker/compose
+###
+
+version: "3.5"
+
+services:
+
+    mysql-local:
+        hostname: mysql-local
+        image: "mariadb:10.7" # mariadb:latest
+        restart: always
+        # ports:
+        #     # REMEMBER that this is UNSAFE for stack deployments on non-DMZ network!!!
+        #     # DO NOT USE ON ANY non-dev ENVIRONMENTS!
+        #     # if you need such a thing, SET UP BOTH PASSWORD AND FIREWALL!
+        #     - 3306:3306
+        volumes:
+            - /etc/localtime:/etc/localtime:ro
+            - ${PWD}/tmp/mysql:/var/lib/mysql
+        environment:
+            MYSQL_ALLOW_EMPTY_PASSWORD: 1
+            MYSQL_ROOT_HOST: "%"
+        command:
+            - --socket=/var/lib/mysql/mysql.sock
+
+    dynamodb-local:
+        hostname: dynamodb-local
+        image: "amazon/dynamodb-local:latest"
+        restart: always
+        user: ${USER_IDMAP}
+        ports:
+            - 8000:8000
+        volumes:
+            - /etc/localtime:/etc/localtime:ro
+            - ${PWD}/tmp/ddb:/home/dynamodblocal/data
+        working_dir: /home/dynamodblocal
+        command: -jar ./DynamoDBLocal.jar -sharedDb -dbPath ./data
+
+    api-local:
+        hostname: api-local
+        #image: ${COMPOSE_PROJECT_NAME}-devenv
+        build: docker/devenv
+        restart: always
+        #user: ${USER_IDMAP}
+        network_mode: host
+        volumes:
+            #- /etc/localtime:/etc/localtime:ro
+            - /etc/passwd:/etc/passwd:ro
+            - /etc/group:/etc/group:ro
+            #- /etc/shadow:/etc/shadow:ro
+            - ${USER_HOME}/.aws:${USER_HOME}/.aws:ro
+            - ${USER_HOME}/.aws-sam:${USER_HOME}/.aws-sam
+            - /var/run/docker.sock:/var/run/docker.sock
+            - ${PWD}:${PWD}
+        working_dir: ${PWD}
+        environment:
+            USER_NAME: ${USER_NAME}
+            SAM_CLI_TELEMETRY: 0
+        command: |
+            sam local start-api --docker-network ${COMPOSE_PROJECT_NAME}_default
+            --region ${API_LOCAL_REGION}
+            --template v2x.yaml
+            --parameter-overrides InstanceMode=mock
+            --host 0.0.0.0

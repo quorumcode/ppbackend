@@ -1,0 +1,125 @@
+#!/bin/bash
+
+# this is a wrapper for mariadb cli
+# usage: [INST={prod|test|mock}] [DUMP={url|cfg|dbname}] [NOBANNER=1] [TOOL={mysql|mysqldump}] tool/db [any regular mysql(dump) options/args]
+# INST by default is "mock"
+# DUMP=url: dump mysql connection url and exit
+# DUMP=cfg: dump mysql* tool config and exit
+# DUMP=dbname: dump only db name
+# NOBANNER: use any non-empty value to omit attention banner
+# TOOL: use other mysql* tool instead of default (default is 'mysql', and for now 'mysqldump' is the only alternative option)
+
+declare -A CFG CFG_MYSQL CFG_MYSQLDUMP
+CFG[default-character-set]='utf8'
+CFG_MYSQL[show-warnings]=1
+
+INST=${INST-mock}
+if [[ -v INST ]]; then
+    _parseurl() (
+        local URL_REGEX="^(?<full>mysql://(?<user>[^:@]*(?=[:@]))?(:(?<password>[^@]*)(?=@))?@?(?<host>[^:/]+)(:(?<port>[0-9]+))?(/(?<database>[^/?]+))?.*$)"
+        <<< "$1" jq -R 'capture("'"$URL_REGEX"'") | to_entries | map(select(.value)) | .[] | [.key, .value] | @tsv' -r
+    )
+
+    URL=$(< v2x.yaml INST="$INST" yq '.Mappings.InstanceMode2Env.MYSQLCFG[$ENV.INST] // ""' -r)
+    [[ "" == "$URL" ]] && {
+        >&2 echo "can't found config for INST=$INST"
+        exit 1
+    }
+
+    [[ "url" == "$DUMP" ]] && {
+        printf '%s\n' "$URL"
+        exit
+    }
+
+    case "$INST" in
+        prod ) INFO=PRODUCTION; CAPS=$'\e[31m\e[5m' ;;
+        test ) INFO=$INST;      CAPS=$'\e[36m'      ;;
+        *    ) INFO=$INST;      CAPS=$'\e[97m'      ;;
+    esac
+
+    while read -rs K V; do
+        case "$K" in
+            host | port | user | password ) CFG[$K]=$V ;;
+            database )
+                CFG_MYSQL[database]=$V          # comment this if database from config doesnt exist
+                #CFG_MYSQLDUMP[databases]=$V     # DOESNT WORK AS EXPECTED, use ... TOOL=mysqldump ... or ... $(DUMP=dbname tool/db) ...
+                ;;
+        esac
+    done < <(_parseurl "$URL")
+
+    [[ "dbname" == "$DUMP" ]] && {
+        printf '%s\n' "${CFG_MYSQL[database]}"
+        exit
+    }
+
+    if [[ "mysql-local" == "${CFG[host]}" ]]; then
+        unset CFG[host]
+        CFG[socket]=$(dirname "${BASH_SOURCE[0]}")/../tmp/mysql/mysql.sock
+    fi
+
+else
+    # left here for reference only
+    case "$TARGET" in
+        db )
+            INFO='local'
+            CAPS=$'\e[97m'
+            CFG[socket]=$(dirname "${BASH_SOURCE[0]}")/../tmp/mysql/mysql.sock
+            #CFG[host]='localhost'
+            CFG[user]='root'
+            CFG_MYSQL[database]='v201-debug-mock'
+            CFG_MYSQLDUMP[databases]='v201-debug-mock'
+            ;;
+        db-docker )
+            INFO='local'
+            CAPS=$'\e[97m'
+            CFG_DOCKER_RUN=(--network pollen_default)
+            CFG[host]='mysql-local'
+            CFG[user]='root'
+            CFG_MYSQL[database]='v201-debug-mock'
+            CFG_MYSQLDUMP[databases]='v201-debug-mock'
+            ;;
+        *)
+            >&2 echo "don't understand TARGET: (TARGET=$TARGET; \$0=$0)"
+            exit 1
+            ;;
+    esac
+fi
+
+# make config file
+TMP=$(mktemp --tmpdir); trap 'rm "$TMP"' exit
+{
+    echo "[client]"
+    for k in "${!CFG[@]}"; do echo "$k='${CFG[$k]}'"; done
+    echo
+    echo "[mysql]"
+    for k in "${!CFG_MYSQL[@]}"; do echo "$k='${CFG_MYSQL[$k]}'"; done
+    echo
+    echo "[mysqldump]"
+    for k in "${!CFG_MYSQLDUMP[@]}"; do echo "$k='${CFG_MYSQLDUMP[$k]}'"; done
+} > "$TMP"
+
+[[ "cfg" == "$DUMP" ]] && {
+    cat "$TMP"
+    exit
+}
+
+# highlight!
+INFO="$INFO${REMOTE:+ ~ $REMOTE}"
+CFG[prompt]="$INFO ${CFG[prompt]:-[\d]> }"
+[[ "" == "$NOBANNER" ]] && >&2 sed -e 's/^.*$/\x1b#3\0\n\x1b#4\0\x1b[0m/;$s/$/\n/' <<< $'\e[4m'"$CAPS""target: $INFO"
+
+# optional docker magic to utilize internal hostnames and nets (SLOW, prefer not to use it)
+CMD=()
+if [[ -v CFG_DOCKER_RUN ]]; then
+    CMD+=(docker run --rm -i -v "$TMP":"$TMP" --env=LANG --env=LC_ALL "${CFG_DOCKER_RUN[@]}")
+    if [[ -t 0 ]]; then CMD+=(-t); fi
+    CMD+=(mariadb:latest)
+fi
+
+case "${TOOL-mysql}" in
+    mysql       ) CMD+=(mysql) ;;
+    mysqldump   ) CMD+=(mysqldump); set -- "${CFG_MYSQL[database]}" "$@" ;;
+    *           ) >&2 echo "unknown or unsupported TOOL=$TOOL"; exit 1 ;;
+esac
+
+"${CMD[@]}" --defaults-extra-file="$TMP" "$@"

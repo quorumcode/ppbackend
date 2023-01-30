@@ -1,0 +1,61 @@
+#!/bin/bash
+
+. "$(dirname "${BASH_SOURCE[0]}")"/_shlib -- "
+    DevOps should be happy with this.
+    Use AWS_PROFILE and other AWS_* env vars to tune AWS cli.
+"
+
+# pretty-print if stdout is a tty
+PRETTY_PRINT=$(( TTYO ))
+
+####################################################################################################
+
+InstanceMode2_prod=(--region eu-west-2 --parameter-overrides InstanceMode=prod)
+InstanceMode2_test=(--region eu-west-2 --parameter-overrides InstanceMode=test)
+InstanceMode2_mock=(--region eu-west-2 --parameter-overrides InstanceMode=mock)
+
+InstanceMode2build_prod=("${InstanceMode2_prod[@]}" --template v2x.yaml --use-container)
+InstanceMode2build_test=("${InstanceMode2_test[@]}" --template v2x.yaml --use-container)
+InstanceMode2build_mock=("${InstanceMode2_mock[@]}" --template v2x.yaml --use-container)
+
+InstanceMode2deploy_prod=("${InstanceMode2_prod[@]}" --no-fail-on-empty-changeset --confirm-changeset --no-disable-rollback --stack-name v2-production  )
+InstanceMode2deploy_test=("${InstanceMode2_test[@]}" --no-fail-on-empty-changeset --confirm-changeset --no-disable-rollback --stack-name v201-debug-test)
+InstanceMode2deploy_mock=("${InstanceMode2_mock[@]}" --no-fail-on-empty-changeset --confirm-changeset --no-disable-rollback --stack-name v201-debug-mock)
+
+
+_cmdinfo_build="{prod|test|mock} [--[no-]cached]: a wrapper for sam build (default is --cached)"
+_cmdcode_build() {
+    local -A OPTS
+    OPTS[cached]=1
+    for ARG; do
+        case "$ARG" in
+            --no-cached ) OPTS[cached]=0; continue ;;
+            --cached    ) OPTS[cached]=1; continue ;;
+            --*         ) _die "Unknown option: $ARG" ;;
+        esac
+        [[ -v OPTS[target] ]] && _die "Target instance may only be specified once; already have $(printf '%q' "${OPTS[target]}")"
+        OPTS[target]="$ARG"
+    done
+    [[ -v OPTS[target] ]] || _die "Target instance is required, but not specified"
+    local -n ARGS_BASE=InstanceMode2build_"${OPTS[target]}"
+    [[ -v ARGS_BASE ]] || _die "Invalid target instance: $(printf '%q' "${OPTS[target]}")"
+    local ARGS=("${ARGS_BASE[@]}")
+    (( OPTS[cached] )) && ARGS+=(--cached)
+    (set -x; SAM_CLI_TELEMETRY=0 sam build "${ARGS[@]}")
+}
+
+
+_cmdinfo_deploy="{prod|test|mock}: a wrapper for sam deploy (guided; build is forced by design)"
+_cmdcode_deploy() {
+    (( $# != 1 )) && _die "(deploy) Required exactly 1 argument for target instance"
+    local -A OPTS
+    OPTS[target]="$1"
+    local -n ARGS_BASE=InstanceMode2deploy_"${OPTS[target]}"
+    [[ -v ARGS_BASE ]] || _die "Invalid target instance: $(printf '%q' "${OPTS[target]}")"
+    _cmdcode_build "${OPTS[target]}" --no-cached || _die "Build failed for target instance: $(printf '%q' "${OPTS[target]}")"
+    local ARGS=("${ARGS_BASE[@]}")
+    (set -x; cd .aws-sam/build; SAM_CLI_TELEMETRY=0 sam deploy "${ARGS[@]}" --guided)
+}
+
+
+_toolmain "$@"

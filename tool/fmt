@@ -1,0 +1,112 @@
+#!/bin/bash
+
+. "$(dirname "${BASH_SOURCE[0]}")"/_shlib -- "
+    Tools for formatting output.
+"
+
+# pretty-print if stdout is a tty
+PRETTY_PRINT=$(( TTYO ))
+
+####################################################################################################
+
+_cmdinfo_jtbl="format each json value from stdin with console.table"
+_cmdcode_jtbl() {
+    jq tojson -r | node -e '
+        const chunks = [];
+        function flush() {
+            const src = Buffer.concat(chunks.splice(0, chunks.length));
+            try {
+                console.table(JSON.parse(src));
+            }
+            catch (e) {
+                console.error(e, src);
+            }
+        };
+
+        process.stdin.on("data", (chunk) => {
+            let ofs = 0;
+            let pos = -1;
+            while (0 <= (pos = chunk.indexOf("\n", ofs))) {
+                if (pos > ofs) {
+                    chunks.push(chunk.slice(ofs, pos));
+                    flush();
+                }
+                ofs = pos + 1;
+            }
+            if (ofs < chunk.length) chunks.push(chunk);
+        });
+
+        process.stdin.on("end", () => {
+            if (chunks.length) flush();
+        });
+    '
+}
+
+_cmdinfo_ddbf="pretty-print dynamodb request answer"
+_cmdcode_ddbf() {
+    jq tojson -r | node -e '
+        Object.assign(require("util").inspect.defaultOptions, {
+            depth: 5,
+            //colors: true,
+            //compact: false,
+            //maxArrayLength: 100,
+        });
+
+        const AWS = require("aws-sdk");
+
+        const chunks = [];
+        function flush() {
+            const src = Buffer.concat(chunks.splice(0, chunks.length));
+            let data;
+            try {
+                data = JSON.parse(src);
+            }
+            catch (e) {
+                console.error(e, src);
+                return;
+            }
+
+            // [...].map(unmarshall) was [...].map(item => AWS.DynamoDB.Converter.unmarshall(item)
+            const unmarshall = AWS.DynamoDB.Converter.unmarshall;
+
+            switch (true) {
+                case Array.isArray(data.Items):
+                    console.log("console.table(data.Items):");
+                    console.table(Array.from(data.Items).map(unmarshall));
+                    delete data.Items;
+                    break;
+                case "Item" in data:
+                    console.log("console.log(data.Item):");
+                    console.log(unmarshall(data.Item));
+                    delete data.Item;
+                    break;
+                default:
+                    console.log("console.log(data):");
+                    console.log(data);
+                    data = {};
+            }
+            if (!Object.keys(data).length) return;
+            console.log("extra data:", data);
+        };
+
+        process.stdin.on("data", (chunk) => {
+            let ofs = 0;
+            let pos = -1;
+            while (0 <= (pos = chunk.indexOf("\n", ofs))) {
+                if (pos > ofs) {
+                    chunks.push(chunk.slice(ofs, pos));
+                    flush();
+                }
+                ofs = pos + 1;
+            }
+            if (ofs < chunk.length) chunks.push(chunk);
+        });
+
+        process.stdin.on("end", () => {
+            if (chunks.length) flush();
+        });
+    '
+}
+
+
+_toolmain "$@"

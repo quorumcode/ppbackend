@@ -1,0 +1,3 @@
+[submodule "jsclients"]
+	path = jsclients
+	url = git@gitlab.com:p9438/pollenpayapi.git

@@ -1,0 +1,80 @@
+#!/bin/bash
+
+INCLUDE=(
+    '.'
+)
+
+EXCLUDE=(
+    '*/.git'
+    './.aws-sam'
+    './tmp'
+    './node_modules'
+    './layers/xdepsLayer/nodejs/node_modules'
+    './layers/xdepsLayer/python'
+    './offshore/webfront/node_modules'
+)
+
+_find() {
+    local FIND=(find --)
+
+    # take all listed in INCLUDE:
+    FIND+=("${INCLUDE[@]}")
+
+    # except anything mentioned in EXCLUDE:
+    FIND+=("(")
+    for P in "${EXCLUDE[@]}"; do
+        FIND+=("(" -path "$P" -prune ")" -o)
+    done
+    FIND+=(-true ")")
+
+    # search for files only:
+    FIND+=(-type f)
+
+    # use \0 as entry delimiter:
+    FIND+=(-print0)
+
+    # invoke and normalize paths by collapsing "./" and "//"
+    "${FIND[@]}" | sed -zre 's/(\/)(\.?\/)*|^(\.\/)+|(\/\.)+$/\1/g'
+}
+
+_grep() (
+    TMP=$(mktemp --tmpdir)
+    trap 'rm "$TMP"' EXIT
+
+    cat > "$TMP"
+
+    # search across file names
+    {
+        local TPUT_AF6=$(tput setaf 6 < /dev/tty)
+        local TPUT_AF5=$(tput setaf 5 < /dev/tty)
+        local TPUT_OP=$(tput op < /dev/tty)
+        local FMT="%s${TPUT_AF6//%/%%}:${TPUT_OP//%/%%} ${TPUT_AF5//%/%%}%s${TPUT_OP//%/%%}\n"
+
+        local GREP=(
+            grep
+            --null-data
+            --color=always
+            "$@"
+        )
+        cat "$TMP" |
+        "${GREP[@]}" |
+        while read -rs -d '' P; do printf -- "$FMT" "$P" "path matches"; done
+    } &
+
+    # search across file contents
+    {
+        local GREP=(
+            grep
+            --binary-files=without-match
+            --line-number
+            --color=always
+            "$@"
+        )
+        cat "$TMP" |
+        xargs --null --no-run-if-empty "${GREP[@]}"
+    } &
+
+    wait
+)
+
+_find | _grep "$@"

@@ -1,0 +1,104 @@
+#!/bin/bash
+
+. "$(dirname "${BASH_SOURCE[0]}")"/_shlib -- "
+    Uncategorized AWS shorthands.
+    Use AWS_PROFILE and other AWS_* env vars to tune AWS cli.
+"
+
+# pretty-print if stdout is a tty
+PRETTY_PRINT=$(( TTYO ))
+
+####################################################################################################
+
+_cmdinfo_api_enum="list remote rest apis"
+_cmdcode_api_enum() (
+    (set -x; aws apigateway get-rest-apis) |
+    REGION=$(aws configure get region) jq '.
+        | .items
+        | map({
+            region: env.REGION,
+            stack: .tags["aws:cloudformation:stack-name"],
+            id,
+            id_logical: .tags["aws:cloudformation:logical-id"],
+            name,
+            description,
+        })
+        | sort_by(.region, .stack)
+        | .[] | [.id, (. | tojson)] | @tsv
+    ' -r |
+    while IFS=$'\t' read -rs ID DATA; do
+        printf '{ "data": %s, "stages": ' "$DATA"
+        (set -x; aws apigateway get-stages --rest-api-id "$ID")
+        printf '}\n'
+    done |
+    jq --slurp '[.[]
+        | .data
+        + { urls: [ "https://" + (.data.id) + ".execute-api." + (.data.region) + ".amazonaws.com/" + (.stages.item[].stageName) ] }
+    ]'
+)
+
+####################################################################################################
+
+_cmdinfo_layer_enum="[LAYER_NAME [...]]: query remote layers and their latest versions or all versions for specified layers"
+_cmdcode_layer_enum() {
+    if [[ 0 == "$#" ]]; then
+        # list all layers
+        CMD=(aws lambda list-layers --no-paginate)
+        "${CMD[@]}" | jq '.[] | map(.LatestMatchingVersion.LayerVersionArn) | .[]' -r
+    else
+        # list specified layers
+        for ARG; do
+            CMD=(aws lambda list-layer-versions --layer-name "$ARG")
+            "${CMD[@]}"
+        done |
+        jq '.LayerVersions | .[] | .LayerVersionArn' -r
+    fi |
+    if ((PRETTY_PRINT))
+    then while IFS=: read -rsa ARR; do printf '%s\t' "${ARR[@]:0:${#ARR[@]}-1}"; printf '%5s\n' "${ARR[-1]}"; done | column -ts$'\t'
+    else cat
+    fi
+}
+
+_cmdinfo_layer_data="{ LAYER_ARN | LAYER_NAME LAYER_VER }: query specified remote layer data"
+_cmdcode_layer_data() {
+    case $# in
+        1 ) CMD=(aws lambda get-layer-version-by-arn --arn "$1") ;;
+        2 ) CMD=(aws lambda get-layer-version --layer-name "$1" --version-number "$2") ;;
+        * ) _die "Either 1 (for ARN query) or 2 (for NAME-VERSION query) args required" ;;
+    esac
+    if ((PRETTY_PRINT))
+    then "${CMD[@]}" | jq -r
+    else "${CMD[@]}"
+    fi
+}
+
+_cmdinfo_layer_pull="LAYER_ARN [UNPACK_DIR]: download layer to local file in current dir or unpack it to specified location"
+_cmdcode_layer_pull() {
+    (( $# < 1 )) && _die "Required at least 1 argument (LAYER_ARN)"
+    local LAYER_ARN="$1"
+    local UNPACK_DIR="$2"
+    local DATA=$(_cmdcode_layer_data "$LAYER_ARN")
+    local LAYER_VERSION_ARN=$(jq -r .LayerVersionArn <<< "$DATA")
+    URL=$(jq -r .Content.Location <<< "$DATA")
+    >&2 printf "Layer versioned ARN: %q\n" "$LAYER_VERSION_ARN"
+    >&2 printf "Content url: %q\n" "$URL"
+    if [[ "" == "$UNPACK_DIR" ]]; then
+        local FILENAME=$LAYER_VERSION_ARN.zip
+        >&2 printf "Target filename: %q\n" "$FILENAME"
+        curl "$URL" -o "$FILENAME"
+        ls -al "$FILENAME"
+    else
+        >&2 printf "Target dir: %q\n" "$UNPACK_DIR"
+        set -e # fail on any error
+        mkdir -p "$UNPACK_DIR"
+        (
+            TMP_FILENAME=$(mktemp --tmpdir)
+            trap 'rm -v "$TMP_FILENAME"' EXIT
+            >&2 printf "Temporary filename: %q\n" "$TMP_FILENAME"
+            curl "$URL" -o "$TMP_FILENAME"
+            unzip "$TMP_FILENAME" -d "$UNPACK_DIR"
+        )
+    fi
+}
+
+_toolmain "$@"

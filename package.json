@@ -1,0 +1,71 @@
+{
+  "name": "pollenpaybackend",
+  "version": "2.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test-admin": "mocha --package=package.json ./admin/test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@gitlab.com/Kreuzstein/pollenpayuat.git"
+  },
+  "author": "Quorum IO Ltd",
+  "license": "SEE LICENSE IN LICENCE",
+  "bugs": {
+    "url": "https://gitlab.com/Kreuzstein/pollenpayuat/issues"
+  },
+  "homepage": "https://gitlab.com/Kreuzstein/pollenpayuat#readme",
+  "###dependencies": {
+    "bcryptjs": "^2.4.3",
+    "nanoid": "^3.3.0",
+    "node-html-parser": "^5.2.0",
+    "ramda": "^0.28.0"
+  },
+  "devDependencies": {
+    "@openapitools/openapi-generator-cli": "^2.5.1",
+    "aws-layer": "file:layers/commonLayer/nodejs/node_modules/aws-layer",
+    "aws-sdk": "^2.1105.0",
+    "bcryptjs": "^2.4.3",
+    "browserify": "^17.0.0",
+    "chai": "^4.3.6",
+    "express": "^4.17.3",
+    "mathjs": "^10.6.4",
+    "messages": "file:layers/commonLayer/nodejs/node_modules/messages",
+    "mocha": "^10.0.0",
+    "models": "file:layers/commonLayer/nodejs/node_modules/models",
+    "mysql": "^2.18.1",
+    "nanoid": "^3.3.4",
+    "pp-admin": "file:layers/commonLayer/nodejs/node_modules/pp-admin",
+    "pp-dbapi": "file:layers/commonLayer/nodejs/node_modules/pp-dbapi",
+    "pp-mysql": "file:layers/commonLayer/nodejs/node_modules/pp-mysql",
+    "ramda": "^0.28.0",
+    "stripe": "file:layers/xdepsLayer/nodejs/node_modules/stripe",
+    "stripe-layer": "file:layers/paymentsLayer/nodejs/node_modules/stripe-layer",
+    "token": "file:layers/commonLayer/nodejs/node_modules/token",
+    "uglify-js": "^3.15.5",
+    "utils": "file:layers/commonLayer/nodejs/node_modules/utils"
+  },
+  "dependencies": {
+    "phone": "^3.1.22"
+  },
+  "@comment mocha": [
+    "--extension          File extension(s) to load                   [string]",
+    "--parallel           Run tests in parallel                       [boolean]",
+    "--recursive          Look for tests in subdirectories            [boolean]",
+    "--async-only         Require all tests to use a callback (async) or return a Promise [boolean]",
+    "--fail-zero          Fail test run if no test(s) encountered     [boolean]",
+    "--timeout            Specify test timeout threshold (in milliseconds) [string]",
+    "--slow               Specify slow test threshold (in milliseconds) [string]"
+  ],
+  "mocha": {
+    "extension": "spec.js",
+    "parallel": true,
+    "recursive": true,
+    "async-only": true,
+    "fail-zero": true,
+    "timeout": "10000",
+    "slow": "300"
+  }
+}

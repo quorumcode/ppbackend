@@ -1,0 +1,5 @@
+spaces: 4
+additionalProperties:
+  usePromises: true
+  disallowAdditionalPropertiesIfNotPresent: false
+  generateAliasAsModel: true

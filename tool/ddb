@@ -1,0 +1,112 @@
+#!/bin/bash
+
+. "$(dirname "${BASH_SOURCE[0]}")"/_shlib -- "
+    DynamoDB shorthands.
+    Use AWS_PROFILE and other AWS_* env vars to tune AWS cli.
+"
+
+# pretty-print if stdout is a tty
+PRETTY_PRINT=$(( TTYO ))
+
+####################################################################################################
+
+
+_cmdinfo_rtbls="{ REMOTE_STACK_NAME }: list remote dynamodb tables for given stack"
+_cmdcode_rtbls() {
+    (( $# < 1 )) && _die "Required at least 1 argument (REMOTE_STACK_NAME)"
+    local REMOTE_STACK_NAME="$1"
+    aws cloudformation describe-stack-resources --stack-name "$REMOTE_STACK_NAME" |
+    REGION=$(aws configure get region) jq '.
+        | .StackResources
+        | map(select(.ResourceType == "AWS::DynamoDB::Table") | {
+            region: env.REGION,
+            stack: .StackName,
+            id: .PhysicalResourceId,
+            id_logical: .LogicalResourceId,
+        })
+    '
+}
+
+_cmdinfo_rpull="{ [--[no-]map] REMOTE_STACK_NAME DST_DIR }: backup remote DynamoDB resources to local dir"
+_cmdcode_rpull() {
+    local -A OPTS
+    local ARGS
+    OPTS[map]=1
+    for ARG; do
+        case "$ARG" in
+            --no-map    ) OPTS[map]=0; continue ;;
+            --map       ) OPTS[map]=1; continue ;;
+        esac
+        ARGS+=("$ARG")
+    done
+    (( ${#ARGS[@]} < 2 )) && _die "Required at least 2 arguments (REMOTE_STACK_NAME and DST_DIR)"
+    local REMOTE_STACK_NAME="${ARGS[0]}"
+    local DST_DIR="${ARGS[1]}"
+
+    ((OPTS[map])) && mkdir -p "$DST_DIR/.$REMOTE_STACK_NAME"
+
+    PRETTY_PRINT=0 _cmdcode_rtbls "$REMOTE_STACK_NAME" |
+    jq -r '.[] | [ .region, .id_logical, .id ] | @tsv' |
+    while IFS=$'\t' read -rs REGION ID_LOGICAL ID; do
+        CMD=(
+            dynamodump
+            --mode backup
+            --region "$REGION"
+            --dumpPath "$DST_DIR"
+            --srcTable "$ID"
+        )
+        (set -x; < /dev/tty "${CMD[@]}")
+        ((OPTS[map])) && (set -x; ln -srf "$DST_DIR/$ID" "$DST_DIR/.$REMOTE_STACK_NAME/$ID_LOGICAL")
+    done
+
+    if ((OPTS[map]))
+    then ls -al "$DST_DIR/.$REMOTE_STACK_NAME"
+    else ls -al "$DST_DIR"
+    fi
+}
+
+_cmdinfo_lpush="{ SRC_DIR[/.STACK_NAME] [DST_HOST:DST_PORT] [--force] }: upload DynamoDB backup to local instance"
+_cmdcode_lpush() {
+    local -A OPTS
+    local ARGS
+    OPTS[force]=0
+    for ARG; do
+        case "$ARG" in
+            --force ) OPTS[force]=1; continue ;;
+        esac
+        ARGS+=("$ARG")
+    done
+    (( ${#ARGS[@]} < 1 )) && _die "Required at least 1 argument (SRC_DIR[/.STACK_NAME])"
+    local SRC_DIR="${ARGS[0]}"
+    local DST_HOST="127.0.0.1"
+    local DST_PORT="8000"
+    (( ${#ARGS[@]} > 1 )) && IFS=: read -rs DST_HOST DST_PORT <<< "${ARGS[1]}"
+
+    find "$SRC_DIR" -mindepth 1 -maxdepth 1 \! -name '.*' -printf '%p\t%l\n' |
+    while IFS=$'\t' read -rs OBJ PHY; do
+        DIR_TBL=$(basename "$OBJ")
+        SRC_TBL=$(basename "${PHY-$OBJ}")
+        DST_TBL=$DIR_TBL
+        CMD=(
+            dynamodump
+            --mode restore
+            --region "local"
+            --dumpPath "$SRC_DIR"
+            --accessKey ""
+            --secretKey ""
+            --host "$DST_HOST"
+            --port "$DST_PORT"
+            --srcTable "$DIR_TBL"
+            --destTable "$DST_TBL"
+            #--log DEBUG
+        )
+        ((OPTS[force])) && CMD+=(--noConfirm)
+        (
+            set -x
+            : using "$SRC_TBL" to build "$DST_TBL"
+            < /dev/tty "${CMD[@]}"
+        )
+    done
+}
+
+_toolmain "$@"
